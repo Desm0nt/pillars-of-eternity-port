@@ -46,10 +46,10 @@ final class F2Gear {
                 s.heading(box, s.when(s.t("Касания", "Touch"), false));
                 c = s.check(box, s.t("Касания как мышь ПК (иначе — консольное управление геймпадом)", "Touch plays as the PC mouse (else the console's gamepad controls)"),
                     s.gamePrefs().getBoolean(P_TOUCH, true));
-                s.note(box, s.t("Тап — левая кнопка; протянуть — рамка / перетаскивание; удержать — правая кнопка; два пальца — сдвиг камеры; щипок — зум; "
-                    + "тап двумя пальцами — пауза; тремя — закрыть окно. Любая кнопка геймпада переключает игру на геймпад до следующего касания картинки.",
-                    "Tap = left click; drag = selection box / dragging; hold = right click; two fingers = pan the camera; pinch = zoom; two-finger tap = pause; "
-                    + "three-finger tap = close a window. Any gamepad button switches the game to the gamepad until the next touch on the picture."));
+                s.note(box, s.t("Тап — левая кнопка; протянуть — перетаскивание; удержать — правая кнопка; два пальца — сдвиг камеры; щипок — зум; "
+                    + "тап двумя пальцами — пауза; два пальца удержать — выбрать весь отряд; тап тремя — закрыть окно. Любая кнопка геймпада переключает игру на геймпад до следующего касания картинки.",
+                    "Tap = left click; drag = dragging; hold = right click; two fingers = pan the camera; pinch = zoom; two-finger tap = pause; "
+                    + "two fingers held = select the whole party; three-finger tap = close a window. Any gamepad button switches the game to the gamepad until the next touch on the picture."));
             }
             public void save(GearSettings s, SharedPreferences.Editor game, SharedPreferences.Editor pad) { game.putBoolean(P_TOUCH, c.isChecked()); }
         };

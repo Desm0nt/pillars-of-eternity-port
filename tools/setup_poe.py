@@ -7,7 +7,7 @@ Complete Edition (Switch) dumps and console keys. Started by setup.bat / setup.s
   setup.bat check                           what is found / installed / prepared, changes nothing
   options: --texture bc|astc|both  --out DIR  --work DIR  --keys FILE  --steps unpack,image,overlay,astc,layout  --jobs N  --yes
 
-What it needs: base game 0100D6200E130000 v0 and update 0100D6200E130800 v393216 (2.60.00), prod.keys of your console; Python 3.11+
+What it needs: base game 0100D6200E130000 v0 and update 0100D6200E130800 v393216 (2.60.00), prod.keys of your console; Python 3.12+
 (setup.bat / setup.sh prepare it), the .NET 10 SDK (offered into tools/.runtime/dotnet when missing), internet for the first run
 (Python packages, the .NET SDK, the translator's NuGet packages), about 90 GB free during the run, 20-40 minutes.
 
@@ -571,7 +571,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('files', nargs='*', help='dump files / folders and prod.keys (default: put-game-files-here/)')
     ap.add_argument('--keys', help='prod.keys (default: found among the files)')
-    ap.add_argument('--work', default=str(REPO / 'work' / 'setup'), help='work folder (default: work/setup); needs ~60 GB')
+    ap.add_argument('--work', default=str(REPO / 'work' / 'setup'), help='work folder (default: work/setup); about 90 GB free is asked at the start, it peaks around 45 GB')
     ap.add_argument('--out', default=str(REPO / 'work' / GAME_NAME), help=f'the folder to copy to the phone (default: work/{GAME_NAME}; '
                     'on the same drive as --work it is made of hard links and takes no extra space)')
     ap.add_argument('--texture', choices=('bc', 'astc', 'both'), help='texture sets (default: asked; with --yes: both)')
