@@ -40,7 +40,7 @@ provided but has not been tested on those systems yet.
 **A phone:**
 
 - Android 8.0 or newer, 64-bit, with Vulkan;
-- **Snapdragon with an Adreno GPU recommended** (tested on Snapdragon 8 Gen 3; Mali / PowerVR / Xclipse phones get
+- **Snapdragon with an Adreno GPU recommended** (tested on Snapdragon 8 Gen 3 and 8 Gen 2; Mali / PowerVR / Xclipse phones get
   their own texture set, see step 4, and are untested);
 - **16 GB free** in internal storage with BC textures, 15 GB with ASTC, 28 GB with both;
 - a USB cable (or another way to copy the folder to the phone).

@@ -38,7 +38,7 @@ Pillars of Eternity Mobile запускает на Android-телефоне **в
 **Телефон:**
 
 - Android 8.0 или новее, 64-бит, с Vulkan;
-- **рекомендуется Snapdragon с GPU Adreno** (проверено на Snapdragon 8 Gen 3; для телефонов с Mali / PowerVR / Xclipse
+- **рекомендуется Snapdragon с GPU Adreno** (проверено на Snapdragon 8 Gen 3 и 8 Gen 2; для телефонов с Mali / PowerVR / Xclipse
   есть свой набор текстур, см. шаг 4, но они не проверялись);
 - **16 ГБ свободно** во внутренней памяти с текстурами BC, 15 ГБ с ASTC, 28 ГБ с обоими наборами;
 - USB-кабель (или другой способ скопировать папку на телефон).

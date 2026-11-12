@@ -15,7 +15,8 @@ them into `put-game-files-here/`, double-click `setup.bat`, copy `work/PillarsOf
 [Releases page](https://github.com/Desm0nt/pillars-of-eternity-port/releases/latest).
 
 > [!WARNING]
-> **Tested so far on one device: Snapdragon 8 Gen 3 / Adreno 750 (Xiaomi 14 Ultra) with the phone's own driver.**
+> **Tested so far on two Snapdragon phones: Xiaomi 14 Ultra (Snapdragon 8 Gen 3 / Adreno 750) and Xiaomi 13 Pro
+> (Snapdragon 8 Gen 2 / Adreno 740), both with the phone's own driver.**
 > **Devices with Mali (Exynos, Dimensity, Tensor), PowerVR and Xclipse GPUs have not been tested at all** — setup can
 > prepare a texture set for them, but expect problems. If something goes wrong on your device, please
 > [open an issue](https://github.com/Desm0nt/pillars-of-eternity-port/issues) and **always attach the logs**: the whole
@@ -64,9 +65,10 @@ The gear button opens the pause menu; *Game settings…* holds the port's own op
 
 ## Current state
 
-Tested on **Snapdragon 8 Gen 3 / Adreno 750** (Xiaomi 14 Ultra, Android 16) with the phone's own Vulkan driver.
+Tested on **Xiaomi 14 Ultra** (Snapdragon 8 Gen 3 / Adreno 750, Android 16) and **Xiaomi 13 Pro** (Snapdragon 8 Gen 2 /
+Adreno 740) with the phone's own Vulkan driver.
 
-- Main menu at **120 FPS**, gameplay at **about 87 FPS** (120 FPS limit). New game, character creation, saving and
+- Main menu at **120 FPS**, gameplay at **about 87 FPS** on the 14 Ultra (120 FPS limit). New game, character creation, saving and
   loading, portraits.
 - **Complete Edition:** both parts of The White March are included.
 - **Touch as the PC mouse:** tap = left click (select, move, attack, talk, any menu or window), hold = right click (hold
@@ -86,7 +88,7 @@ Tested on **Snapdragon 8 Gen 3 / Adreno 750** (Xiaomi 14 Ultra, Android 16) with
   show up, because the Switch player could pass some things in a way the Android player doesn't expect — and Pillars
   on Switch is known to be buggy by itself.
 - Only update **v393216** (2.60.00) is supported; setup checks the build id of the game program.
-- Only one device has been tested; the texture set for Mali / PowerVR / Xclipse has not run on such a phone yet.
+- Only two Snapdragon phones have been tested; the texture set for Mali / PowerVR / Xclipse has not run on such a phone yet.
 - No rumble yet. No PC drag-to-select box (the console build simply doesn't have it).
 - Saves live in the app's own folder (`Android/data/org.pillars.mobile/files/save`): updating the APK keeps them,
   **uninstalling the app deletes them**.
@@ -186,7 +188,8 @@ MIT — see [LICENSE](LICENSE). The d2r-mobile copyright notice is kept; third-p
 ## По-русски
 
 > [!WARNING]
-> **Проверено только на одном устройстве: Snapdragon 8 Gen 3 / Adreno 750 (Xiaomi 14 Ultra).** Телефоны с GPU **Mali**
+> **Проверено только на двух телефонах со Snapdragon: Xiaomi 14 Ultra (Snapdragon 8 Gen 3 / Adreno 750) и Xiaomi 13 Pro
+> (Snapdragon 8 Gen 2 / Adreno 740).** Телефоны с GPU **Mali**
 > (Exynos, Dimensity, Tensor), **PowerVR** и **Xclipse** не тестировались вообще — набор текстур для них установка
 > готовит, но проблемы вероятны. Если что-то не работает,
 > [откройте issue](https://github.com/Desm0nt/pillars-of-eternity-port/issues) и **обязательно приложите логи** — всю
@@ -204,7 +207,7 @@ NVN → Vulkan; перекомпилированы только шейдеры (
 - **Касания как мышь ПК:** тап — левая кнопка, удержание — правая, два пальца — камера, щипок — зум, тап двумя пальцами —
   пауза, два пальца удержать — весь отряд, тап тремя — закрыть окно. Есть и экранный геймпад, и обычные геймпады.
 - **Картинка на весь экран** в пропорциях телефона или 16:9 с полями; **лимит кадров 30 / 60 / 90 / 120** прямо в игре.
-- Проверено на Xiaomi 14 Ultra: главное меню — **120 fps**, в игре — **около 87 fps**.
+- Проверено на Xiaomi 14 Ultra и Xiaomi 13 Pro; на 14 Ultra главное меню — **120 fps**, в игре — **около 87 fps**.
 - **Честное предупреждение:** шейдеры не родные, а приёмные, и плеер подгонялся по совпадениям имён функций из
   декомпиляции, поэтому возможны ошибки текстур и геометрии: плеер Switch мог передавать что-то неожиданно для плеера
   Android, да и сама PoE на Switch довольно кривовата.
