@@ -1,0 +1,4 @@
+{
+  global: il2cpp_*; f2_*; UnityAds*; Java_org_pillars_*;
+  local: *;
+};

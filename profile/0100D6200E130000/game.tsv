@@ -1,0 +1,42 @@
+# Game profile of Pillars of Eternity: Complete Edition (Switch, base game v0 + update 2.60.00 = v393216)
+# Format: see dm/games/README.md
+# Unity 2018.1.4f1 (IL2CPP) with FMOD, SDK 5.4.0: the shaders are Shader objects in the player's serialized files and the asset bundles of StreamingAssets
+# (read by shader_split.py through unityfs.py). Closest profile: Cuphead (Unity 2017.4.9f1, SDK 5.5.0), whose memory keys are the same.
+# Started from the survey's provisional profile (profile_guess.py); not brought up on a device yet
+
+# ---- Identity ----
+title_id	0100D6200E130000
+program_id	0100D6200E130000
+
+# ---- App ----
+name	Pillars of Eternity
+ipa	PillarsOfEternity.ipa
+app_category	public.app-category.games
+
+# ---- Versions ----
+build	v393216	2.60.00	main=68976c702865e548ad33367b1ed393db	subsdk0=41097c438a36afd2e879fa6f5e0f0850	sdk=26ffb122262ca25e4c016c0af2f92a29
+package	v393216
+shader_versions	v393216
+
+# ---- Files ----
+# every module main imports from
+modules	main subsdk0 sdk
+romfs_marker	Data/resources.resource
+zip_store	.assets:.dat:.los:.png:.resource:.ress:.zip:.metallib
+
+# ---- Memory ----
+# main sets a heap of at most the pool − 64 MB: a 3328 MB heap region
+mem_reserve	0x100000000
+mem_alias	0x10000000
+mem_stack	0x10000000
+app_pool	0xCD500000
+# the NPDM declares 0 MB of system resource: IsVirtualAddressMemoryEnabled is false, as on Horizon (Big Brain Academy: Brain vs. Brain sets a heap only then)
+sys_resource	0x0
+
+# ---- Shader split ----
+shader_groups	/Data/=data
+shader_note	Pillars of Eternity shaders
+
+# ---- After the rewrite ----
+# the rewritten modules are larger than the default 64 MB of used memory (Age of Calamity: 66.6 MB → 72 MB)
+mem_used	0x5400000

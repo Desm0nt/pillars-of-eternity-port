@@ -1,0 +1,13 @@
+# Pillars of Eternity: Complete Edition on Android (keys in docs/ARCHITECTURE.md "Game profiles on Android")
+# Unity 2018.1.4f1 IL2CPP with FMOD on SDK 5.4.0, update 2.60.00; 1,178 shaders from Data/*.assets, Data/Resources and the object bundle, all translated.
+# Played by touch as the PC version is by mouse (hle_poe_touch.c): the on-screen gamepad starts hidden, the pause menu shows it again; a press on it switches the game to its
+# console input until the next touch on the picture. The picture takes the screen's aspect (hle_poe.c: 1600x900 -> 1920x864 on 20:9) and the game's own present interval 1 (60 fps).
+# The three switches are the host's defaults, written here so they are visible in env.txt (0 / 0 / 30 = the stock console input, 16:9 and 30 fps, without a new port).
+# Not started on a device yet (ported 2026-11-11): everything above was found and checked statically
+status	experimental
+package	org.pillars.port
+orientation	landscape
+setting	overlay=0
+env	DM_POE_TOUCH_MOUSE=1
+env	DM_POE_WIDE=1
+env	DM_POE_FPS=60

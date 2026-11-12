@@ -1,0 +1,10 @@
+# Python packages of the setup (tools/setup_poe.py and the tools it runs), Python 3.12 or newer. setup.bat / setup.sh install
+# them into a private virtual environment (tools/.runtime); by hand: python -m pip install -r tools/requirements.txt
+pycryptodome==3.20.0                     # NSZ / XCZ decompression and NCA decryption helpers of nx2android's porter (porter/dumps.py)
+backports.zstd==1.8.0; python_version < "3.14"   # zstd for NSZ / XCZ and the shader bundle (Python 3.14 has compression.zstd)
+lz4==4.4.5                               # NSO segments, Unity's LZ4 blocks
+capstone==5.0.7                          # disassembler: the rewrite (patch_nso.py) and the game image step
+numpy==2.5.4                             # texture arrays of the ASTC step
+astc-encoder-py==0.1.12                  # ARM's astc-encoder (Apache-2.0) bindings: the ASTC texture set
+texture2ddecoder==1.0.6                  # BC decoders, to compare the ASTC textures with the originals
+archspec==0.2.6                          # CPU feature detection used by astc-encoder-py

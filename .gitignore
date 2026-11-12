@@ -1,0 +1,55 @@
+# Pillars of Eternity Mobile: everything local stays out of Git -- work folders, the player's game files and anything derived
+# from them (dumps, ExeFS, RomFS, the game image, the overlay, the ASTC set, shader bundles), console keys, signing keys, APKs,
+# logs, saves, the private Python / .NET runtimes and the local build configuration.
+/work/
+/build/
+/dist/
+/tools/.runtime/
+/build.local.env
+/put-game-files-here/*
+!/put-game-files-here/README.txt
+__pycache__/
+*.pyc
+obj/
+bin/
+# game files and derived data
+*.nsp
+*.nsz
+*.nca
+*.ncz
+*.xci
+*.xcz
+*.nso
+*.npdm
+*.dmsv
+*.f2img
+*.patched.bin
+*.assets
+*.resS
+*.resource
+*.unity3d
+global-metadata.dat
+libf2game.so
+# keys and signing material
+*.keys
+prod.keys
+title.keys
+dev.keys
+*.tik
+signing-key.json
+*.pk8
+*.der
+*.keystore
+*.jks
+*.p12
+*.pfx
+# build outputs, device files
+*.apk
+*.aab
+*.idsig
+*.so
+*.o
+*.log
+*.sav
+/saves/
+/save/
