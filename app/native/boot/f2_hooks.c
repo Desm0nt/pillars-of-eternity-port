@@ -157,6 +157,53 @@ static void apply_loadimage_patch(void)
     }
 }
 
+/* ThreadedStreamBuffer lost wake-up: the PLAYER'S OWN race (both 2018.1.4 variants), the likely start-up hang of phone run 37 (13 Pro) and of
+ * 12.11 20:51 (14 Ultra); PROGRESS.txt [35], KB UNP-12.  The ring buffer between the main thread and the render thread (GfxDeviceClient ->
+ * GfxDeviceWorker; vk::TaskExecutor's stream is the same class) parks the side that has nothing to do with a Dekker-style hand-shake:
+ *   consumer (HandleOutOfBufferToReadFrom): stlr 1 -> "reader waits" flag (+0x118); ldr write position (+0x80); unchanged -> WaitForSignal
+ *   producer (SubmitCommands and its inlined copies):  stlr write position (+0x80); ldr flag (+0x118); 0 -> no Signal
+ * and the mirror pair for a producer that waits for room (flag +0xd8, read position +0x40).  On ARMv8 a plain LDR after an STLR may be served
+ * before the store is visible to the other core, so EACH side can read the other's old value: the consumer sleeps on a command that is
+ * there and the producer does not wake it.  That heals at the producer's next submit, unless the producer now waits for an answer
+ * (CreateGpuProgram, SyncAsyncResourceUpload, ReadbackImage, the present sync ...): then both wait for ever.  Run 37's stacks were exactly
+ * that: main thread in GfxDeviceClient::CreateGpuProgram -> WaitForSignal, render thread in HandleOutOfBufferToReadFrom -> WaitForSignal.
+ * Fix: each of those loads becomes LDAR (same register, same address): an STLR followed by an LDAR is ordered (ARMv8 is RCsc), which
+ * closes the window on both sides.  The sites = an stlr to one field of the buffer, then a plain 32-bit load of its partner field off the
+ * same base (a scan of each variant; the engine's unit tests in the Development player left out).  f2_config.txt tsb_fix=0: the player's own. */
+static const uint32_t k_tsb_rel[] = {
+    0x63c560, 0x63fc04, 0x63fc80, 0x641b14, 0x641c90, 0x64ea44, 0x64ec40, 0x64f364, 0x64f42c, 0x64f5d0, 0x64f7c4, 0x64f8dc, 0x64fa74, 0x650474,
+    0x6504a8, 0x6512b0, 0x653614, 0x653640, 0x653db4, 0x653e84, 0x65465c, 0x65474c, 0x65483c, 0x654a44, 0x654d60, 0x654e10, 0x654e8c, 0x654f20,
+    0x655330, 0x65610c, 0x6563e0, 0x65cb24, 0x65fce0, 0x6677e8, 0x6684f0, 0x668f28, 0x669608, 0x66a5f4, 0x66b6d4, 0x66cd58, 0x685ef8, 0x6860f4,
+    0x686164, 0x6861b4, 0x686244, 0x686280, 0x686344, 0x68637c, 0x6863fc, 0x68649c, 0x68650c, 0x68659c, 0x6865e8, 0x9d14b4, 0x9d18a4, 0x9d18e8,
+    0x9d1a58, 0x9d1aa0, 0x9d1cd4,
+};
+static const uint32_t k_tsb_dev[] = {
+    0xa0b0b8, 0xa0ea80, 0xa0eafc, 0xa10c44, 0xa10df0, 0xa1eb74, 0xa1edd8, 0xa1f520, 0xa1f5e8, 0xa1f78c, 0xa1f97c, 0xa1fa8c, 0xa1fc24, 0xa20410,
+    0xa20444, 0xa211b4, 0xa2373c, 0xa23768, 0xa23ed8, 0xa23fa8, 0xa245b8, 0xa24db0, 0xa25358, 0xa255b4, 0xa25788, 0xa25838, 0xa258b4, 0xa25948,
+    0xa261b0, 0xa271e8, 0xa27590, 0xa308b8, 0xa33b0c, 0xa3b8b4, 0xa3c7f4, 0xa3d2f8, 0xa3dc08, 0xa3ed0c, 0xa3fe78, 0xa407dc, 0xa41f18, 0xa5c0f0,
+    0xa5c324, 0xa5c374, 0xa5c40c, 0xa5c448, 0xa5c514, 0xa5c54c, 0xa5c5d4, 0xa5c6cc, 0xa5c740, 0xa5c7d8, 0xa5c824, 0xa5c8b0, 0xefd94c, 0xefdf50,
+    0xefdf94, 0xefe104, 0xefe14c, 0xefe380,
+};
+static void apply_tsb_patch(void)
+{
+    const uint32_t *t = NULL; unsigned n = 0;
+    if (!strcmp(s_build_id, "77482bdd52bc8403622024b79c44fe6d12c4c6cc")) { t = k_tsb_rel; n = sizeof k_tsb_rel / sizeof k_tsb_rel[0]; }
+    else if (!strcmp(s_build_id, "65a4f5f769a495172096da9070547c0df16764fe")) { t = k_tsb_dev; n = sizeof k_tsb_dev / sizeof k_tsb_dev[0]; }
+    if (!t) return;
+    if (!f2_cfg.tsb_fix) { f2_log("F2: ThreadedStreamBuffer: the player's own hand-shake (tsb_fix=0; a lost wake-up can hang the main and render threads)"); return; }
+    unsigned ok = 0, bad = 0;
+    for (unsigned i = 0; i < n; i++) {
+        uint32_t cur;
+        memcpy(&cur, (void *)(s_ubase + t[i]), 4);
+        /* ldr wT, [xN] (unsigned offset 0) -> ldar wT, [xN]; anything else at a listed place = not this build: leave it */
+        uint32_t neu = (cur & 0xfffffc00u) == 0xb9400000u ? 0x88dffc00u | (cur & 0x3ffu) : cur;
+        if (neu == cur && (cur & 0xfffffc00u) != 0x88dffc00u) { if (bad++ < 4) f2_log("F2: [RED] ThreadedStreamBuffer patch: libunity+0x%x holds %08x, not a plain 32-bit load", t[i], cur); continue; }
+        if (patch_word(s_ubase + t[i], cur, neu) == 0) ok++; else bad++;
+    }
+    f2_log("F2: ThreadedStreamBuffer: %u of %u hand-shake loads after a store-release are load-acquire now (lost wake-up of the render / main thread)%s",
+           ok, n, bad ? "  [RED: some places not patched]" : "");
+}
+
 static int patch_words(uintptr_t addr, uint32_t old_first, const uint32_t *w, int n)
 {
     uint32_t cur;
@@ -589,6 +636,7 @@ void f2_hooks_install(void *unity_handle)
     apply_alloc_patch();
     apply_vendor_patch();
     apply_loadimage_patch();
+    apply_tsb_patch();
     install_trace();
     f2_log("F2: libunity variant: %s", s_variant);
     install_pump();

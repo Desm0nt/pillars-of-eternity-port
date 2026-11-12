@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <link.h>
+#include <dirent.h>
 #include <ucontext.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
@@ -226,6 +227,118 @@ static void handler(int sig, siginfo_t *si, void *ucv)
     fsync(f2_log_fd());
     s_in_handler = 2;
     chain(sig, si, ucv);
+}
+
+/* ------------------------------------------------------------------ stall report (the heartbeat, f2_boot.c)
+ * The in-process twin of tools/phone_stacks.py, for a tester's log: for every thread of the process its name, state, the system call it
+ * sits in and the user pc (/proc/self/task/<tid>/syscall), then the words of its stack (from that sp up) that are return addresses into
+ * code: in an executable mapping AND right after a BL / BLR.  A scan, not an unwind: a stale frame left by an earlier call can show up;
+ * read each line left to right (innermost first).  Reads go through /proc/self/mem (an unmapped address is an error, never a fault).
+ * tools/symbolize.py turns "libunity.so+0x.." into names on the PC. */
+typedef struct { uintptr_t lo, hi; } f2_xrange_t;
+static f2_xrange_t s_x[2048];
+static int s_nx;
+static uintptr_t s_va_mask;
+static int in_code(uintptr_t a)
+{
+    int lo = 0, hi = s_nx - 1;
+    while (lo <= hi) { int m = (lo + hi) / 2; if (a < s_x[m].lo) hi = m - 1; else if (a >= s_x[m].hi) lo = m + 1; else return 1; }
+    return 0;
+}
+static int read_file(const char *path, char *out, size_t n)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { out[0] = 0; return -1; }
+    ssize_t r = read(fd, out, n - 1);
+    close(fd);
+    if (r < 0) r = 0;
+    out[r] = 0;
+    while (r > 0 && (out[r - 1] == '\n' || out[r - 1] == ' ')) out[--r] = 0;
+    return (int)r;
+}
+static const char *sys_name(long nr)
+{
+    switch (nr) {
+    case 98: return "futex"; case 101: return "nanosleep"; case 115: return "clock_nanosleep"; case 73: return "ppoll"; case 22: return "epoll_pwait";
+    case 63: return "read"; case 64: return "write"; case 29: return "ioctl"; case 72: return "pselect6"; case 207: return "recvfrom"; case 56: return "openat";
+    case 67: return "pread64"; case 124: return "sched_yield"; case 130: return "tkill"; case 131: return "tgkill"; default: return "?";
+    }
+}
+void f2_crash_dump_threads(const char *why)
+{
+    char line[1000], a[160], path[96], comm[40], stat[400], sc[300], wchan[64];
+    f2_crash_refresh_modules();
+    /* executable mappings, sorted as the kernel lists them */
+    s_nx = 0; s_va_mask = 0;
+    FILE *mp = fopen("/proc/self/maps", "r");
+    if (mp) {
+        char ml[600];
+        uintptr_t top = 0;
+        while (fgets(ml, sizeof ml, mp)) {
+            unsigned long lo, hi; char perm[8];
+            if (sscanf(ml, "%lx-%lx %7s", &lo, &hi, perm) != 3) continue;
+            if (hi > top) top = hi;
+            if (perm[2] == 'x' && s_nx < (int)(sizeof s_x / sizeof s_x[0])) { s_x[s_nx].lo = lo; s_x[s_nx].hi = hi; s_nx++; }
+        }
+        fclose(mp);
+        for (s_va_mask = 1; s_va_mask && s_va_mask < top; s_va_mask <<= 1) {}
+        s_va_mask = s_va_mask ? s_va_mask - 1 : ~(uintptr_t)0;
+    }
+    int mem = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+    DIR *d = opendir("/proc/self/task");
+    int nthreads = 0;
+    if (d) { struct dirent *e; while ((e = readdir(d))) if (e->d_name[0] != '.') nthreads++; rewinddir(d); }
+    f2_log("F2: ======== stall report: %s; %d threads; libunity %s at %p, game image at %p ========", why, nthreads,
+           f2_unity_variant(), (void *)f2_unity_base(), (void *)f2_game_base());
+    f2_log("F2: stall: per thread: state / system call / user pc, then return addresses found on its stack (innermost first; a scan: stale frames possible)");
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            if (e->d_name[0] == '.') continue;
+            int tid = atoi(e->d_name);
+            snprintf(path, sizeof path, "/proc/self/task/%d/comm", tid); read_file(path, comm, sizeof comm);
+            snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid); read_file(path, stat, sizeof stat);
+            snprintf(path, sizeof path, "/proc/self/task/%d/wchan", tid); read_file(path, wchan, sizeof wchan);
+            snprintf(path, sizeof path, "/proc/self/task/%d/syscall", tid); read_file(path, sc, sizeof sc);
+            const char *rp = strrchr(stat, ')');
+            char state = rp && rp[1] == ' ' ? rp[2] : '?';
+            /* syscall: "nr a1 .. a6 sp pc" (blocked in a call), "-1 sp pc" (blocked, no call), "running" */
+            long nr = -2; unsigned long sp = 0, pc = 0;
+            if (strncmp(sc, "running", 7) != 0) {
+                char *tok[12], *save = NULL; int nt = 0;
+                for (char *s = strtok_r(sc, " ", &save); s && nt < 12; s = strtok_r(NULL, " ", &save)) tok[nt++] = s;
+                if (nt >= 3) { nr = strtol(tok[0], NULL, 0); sp = strtoul(tok[nt - 2], NULL, 0); pc = strtoul(tok[nt - 1], NULL, 0); }
+            }
+            int w = 0;
+            if (nr == -2) w = snprintf(line, sizeof line, "F2: stall: %5d %-16s %c running (on a CPU: no pc without a signal)", tid, comm, state);
+            else {
+                if (!f2_describe_addr(pc, a, sizeof a)) snprintf(a, sizeof a, "%lx", pc);
+                w = snprintf(line, sizeof line, "F2: stall: %5d %-16s %c %s%s %ld(%s) pc %s |", tid, comm, state, wchan[0] && strcmp(wchan, "0") ? wchan : "",
+                             wchan[0] && strcmp(wchan, "0") ? "" : "-", nr, nr >= 0 ? sys_name(nr) : "none", a);
+            }
+            if (sp && mem >= 0 && w > 0) {
+                static uint64_t stk[0x4000 / 8];
+                ssize_t got = pread(mem, stk, sizeof stk, (off_t)(sp & ~(uintptr_t)7));
+                int frames = 0;
+                for (ssize_t i = 0; got > 0 && i < got / 8 && frames < 16 && w < (int)sizeof line - 60; i++) {
+                    uintptr_t v = (uintptr_t)stk[i];
+                    if (!in_code(v)) { v &= s_va_mask; if (!in_code(v)) continue; }
+                    uint32_t insn = 0;
+                    if (v < 4 || !in_code(v - 4) || pread(mem, &insn, 4, (off_t)(v - 4)) != 4) continue;
+                    if ((insn & 0xfc000000u) != 0x94000000u && (insn & 0xfffffc1fu) != 0xd63f0000u) continue;   /* bl / blr before it */
+                    if (!f2_describe_addr(v, a, sizeof a)) snprintf(a, sizeof a, "%lx", (unsigned long)v);
+                    w += snprintf(line + w, sizeof line - w, " %s", a);
+                    frames++;
+                }
+            }
+            f2_log("%s", line);
+        }
+        closedir(d);
+    }
+    if (mem >= 0) close(mem);
+    f2_diag_dump_invokes(out);
+    f2_log("F2: ======== end of stall report ========");
+    fsync(f2_log_fd());
 }
 
 void f2_crash_install(void)

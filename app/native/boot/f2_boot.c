@@ -18,7 +18,7 @@ int f2_alloc_overflowed(void);
 f2_config_t f2_cfg = {
     .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1,
     .invoke_log = 60, .throw_log = 300, .open_log = 400, .heartbeat = 5, .crash = 1, .ctl = 1,
-    .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1,
+    .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1, .tsb_fix = 1, .stall_dump = 3,
 };
 unsigned long f2_cnt_opens, f2_cnt_open_fail, f2_cnt_frames, f2_cnt_shaders, f2_cnt_shader_fail,
     f2_cnt_pipelines, f2_cnt_pipeline_fail, f2_cnt_unity_lines, f2_cnt_unity_errors;
@@ -145,6 +145,8 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "wide")) f2_cfg.wide = atoi(v);
         else if (!strcmp(k, "unity_trace")) f2_cfg.unity_trace = atoi(v);
         else if (!strcmp(k, "alloc_fix")) f2_cfg.alloc_fix = atoi(v);
+        else if (!strcmp(k, "tsb_fix")) f2_cfg.tsb_fix = atoi(v);
+        else if (!strcmp(k, "stall_dump")) f2_cfg.stall_dump = atoi(v);
         else if (!strcmp(k, "any_gpu")) f2_cfg.any_gpu = atoi(v);
         else if (!strcmp(k, "touch")) f2_cfg.touch = atoi(v);
         else if (!strcmp(k, "touch_log")) f2_cfg.touch_log = atoi(v);
@@ -178,6 +180,15 @@ static void *heartbeat(void *arg)
         int same = !memcmp(cur, last, sizeof cur);
         memcpy(last, cur, sizeof cur);
         idle = same ? idle + 1 : 0;
+        /* nothing moved for two beats (10 s): where every thread is, once per stall, a few times per run (phone 12.11 20:51: a start-up
+         * hang left only "[NO PROGRESS]" and no way to tell which thread waited for what) */
+        static int dumps;
+        if (same && idle == 2 && dumps < f2_cfg.stall_dump) {
+            dumps++;
+            char why[160];
+            snprintf(why, sizeof why, "no progress for %d s (frames %lu, invokes %lu, opens %lu)", 2 * f2_cfg.heartbeat, f2_cnt_frames, inv, f2_cnt_opens);
+            f2_crash_dump_threads(why);
+        }
         /* quiet when nothing moves, except a line every 6th beat so that a hang is visible in the log */
         if (same && idle % 6 != 1) continue;
         struct timespec t;

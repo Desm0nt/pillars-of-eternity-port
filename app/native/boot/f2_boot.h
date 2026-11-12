@@ -73,6 +73,8 @@ typedef struct {
     int any_gpu;              /* 1: the engine's Vulkan vendor list is opened to any vendor (f2_hooks.c) */
     int alloc_fix;            /* 1: the player's allocator page table survives a heap wider than five 4 GB windows (f2_hooks.c) */
     int unity_trace;          /* 1: call counters at the player's JNI natives and start-up functions (f2_hooks.c) */
+    int tsb_fix;              /* 1: the player's ThreadedStreamBuffer hand-shake loads made load-acquire (lost wake-up = start-up hang; f2_hooks.c) */
+    int stall_dump;           /* number of stall reports (thread list + stacks) per run when nothing moves for 10 s (f2_crash.c; 0 = off) */
     int pump_ms;              /* time slice of the pump per call, ms (0 = QualitySettings.asyncUploadTimeSlice) */
     char tex_set[16];         /* "" / auto: ASTC set when the GPU has no BC and overlay-astc has files; astc | bc: forced (f2_texset.c) */
     int bc_hide;              /* 1: the player is shown a GPU without BC (f2_vkwrap.c) -- Adreno test of the no-BC path; auto then picks ASTC */
@@ -136,6 +138,7 @@ void f2_ctl_start(void);
 void f2_crash_install(void);
 void f2_crash_refresh_modules(void);
 int f2_describe_addr(uintptr_t addr, char *out, size_t n);     /* "libunity.so+0x1234" / "main+0x..." */
+void f2_crash_dump_threads(const char *why);                   /* stall report: every thread's state, pc and stack frames */
 
 /* counters shown by the heartbeat */
 extern unsigned long f2_cnt_opens, f2_cnt_open_fail, f2_cnt_frames, f2_cnt_shaders, f2_cnt_shader_fail,
