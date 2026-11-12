@@ -77,7 +77,7 @@ pictures are in `docs/images/`, remove the comment markers around the table belo
 **Controls**
 
 - **Touch as the PC mouse**: tap = left click (select, move, attack, talk, every menu and window), hold = right click,
-  two-finger drag = move the camera, pinch = zoom. The hold time for the right click can be set (300–900 ms).
+  two-finger drag = move the camera, pinch = zoom, two-finger tap = pause, two fingers held = select the whole party, three-finger tap = close the window. The hold time for the right click can be set (300–900 ms).
 - **On-screen gamepad** with floating sticks and the console's own gamepad controls, for players who prefer them (turn
   *Touch plays as the PC mouse* off): skins, opacity, size, stick dead zone and a layout editor (move, resize, hide)
   from the shared front end of the DOOM / Diablo III / Torchlight II ports.
@@ -257,7 +257,7 @@ end descends from it); third-party components keep their own licenses ([docs/THI
   Сохранения и портреты персонажей работают как на консоли. Язык игры выбирается в настройках (английский, русский,
   немецкий, французский, испанский, итальянский, польский).
 - **Касания как мышь ПК:** тап — левая кнопка (выбор, ходьба, атака, разговор, любые меню и окна), удержание — правая
-  кнопка, движение двумя пальцами — сдвиг камеры, щипок — зум. Время удержания для правой кнопки настраивается.
+  кнопка, движение двумя пальцами — сдвиг камеры, щипок — зум, тап двумя пальцами — пауза, два пальца удержать — выбрать весь отряд, тап тремя пальцами — закрыть окно. Время удержания для правой кнопки настраивается.
 - **Экранный геймпад** с плавающими стиками — консольное управление для тех, кому так привычнее; скины, прозрачность,
   размер, мёртвая зона стиков и редактор раскладки из общего фронтенда портов DOOM / Diablo III / Torchlight II.
   Геймпады (Bluetooth / USB) работают, экранный пад при этом прячется.

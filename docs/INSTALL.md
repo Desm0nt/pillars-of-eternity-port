@@ -151,7 +151,7 @@ first time.
    click, game language, FPS counter, on-screen gamepad.
 
 **Playing by touch:** tap = left click (select, move, attack, talk, every menu and window), hold = right click, drag
-with two fingers = move the camera, pinch = zoom. If you prefer the console's gamepad controls, turn off *Touch plays as
+with two fingers = move the camera, pinch = zoom, two-finger tap = pause, two fingers held = select the whole party, three-finger tap = close the window. If you prefer the console's gamepad controls, turn off *Touch plays as
 the PC mouse* in the settings and use the on-screen gamepad (*On-screen gamepad…* in the pause menu: skin, opacity, size,
 layout). A Bluetooth / USB controller works too; the on-screen pad hides while you use it.
 
