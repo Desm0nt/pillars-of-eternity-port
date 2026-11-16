@@ -58,7 +58,7 @@ MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <application android:label="@string/app_name" android:icon="@drawable/icon" android:theme="@style/UnityThemeSelector"
         android:debuggable="true" android:extractNativeLibs="true" android:requestLegacyExternalStorage="true"
-        android:isGame="true" android:allowBackup="false" android:hasCode="true" android:allowNativeHeapPointerTagging="false">
+        android:isGame="true" android:appCategory="game" android:allowBackup="false" android:hasCode="true" android:allowNativeHeapPointerTagging="false">
         <!-- the icon's entry: checks the data folder / asks for file access before any engine code runs, then starts DmActivity -->
         <activity android:name="org.pillars.port.StartActivity" android:label="@string/app_name" android:exported="true"
             android:screenOrientation="sensorLandscape" android:noHistory="true" android:theme="@android:style/Theme.DeviceDefault.NoActionBar"

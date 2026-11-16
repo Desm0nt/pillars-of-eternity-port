@@ -52,6 +52,14 @@ JNIEXPORT void JNICALL Java_org_pillars_port_DmActivity_nativeDisplayHz(JNIEnv *
     f2_touch_game_action(3);
 }
 
+/* the panel's fastest refresh rate (same size modes); a cap of one vsync uses the pacer when the panel can go faster (f2_screen.c) */
+void f2_screen_set_display_max_hz(float hz);
+JNIEXPORT void JNICALL Java_org_pillars_port_DmActivity_nativeDisplayMaxHz(JNIEnv *e, jclass c, jfloat hz)
+{
+    (void)e; (void)c;
+    f2_screen_set_display_max_hz(hz);
+}
+
 /* the gear's frame rate, picked while the game runs */
 JNIEXPORT void JNICALL Java_org_pillars_port_DmActivity_nativeSetFps(JNIEnv *e, jclass c, jint fps)
 {

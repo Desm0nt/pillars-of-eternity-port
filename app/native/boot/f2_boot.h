@@ -67,6 +67,8 @@ typedef struct {
     int wide;                 /* 1: a 16:9 Screen.SetResolution request is widened to the window's aspect (f2_screen.c) */
     int fps;                  /* 0: the game's own; 30 | 60 | 90 | 120: forced */
     int pacelog;              /* 1: the frame pacing histograms every 5 s (f2_vkwrap.c, f2_screen.c); 0 (default) */
+    int adpf;                 /* 1 (default): ADPF hint session for the player's threads + CPU/GPU load-up hints when frames run late (f2_perf.c); 0: off */
+    int perflog;              /* 1 (default): one [perf] line every 10 s (frame work, ADPF, thread CPU / clocks, GPU clock, thermal headroom; f2_perf.c) */
     int pace;                 /* 1 (default): a cap of 2+ vsyncs per frame is kept by f2_vkwrap.c's present pacer (f2_screen.c); 0: the player's vsync wait */
     int res;                  /* 100: the game's own render size; 50..99: the Screen.SetResolution request scaled to this percent (f2_screen.c) */
     int icall_log;            /* 1: a line for every internal call the game resolves (f2_diag.cpp) */

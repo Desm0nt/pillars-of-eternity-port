@@ -23,6 +23,8 @@ static PFN_vkCreateShaderModule r_create_shader;
 static PFN_vkCreateGraphicsPipelines r_create_gp;
 static PFN_vkCreateComputePipelines r_create_cp;
 void f2_screen_note_fps(float fps);
+void f2_perf_present_begin(long long frame_ns);
+void f2_perf_present_end(void);
 static PFN_vkCreateSwapchainKHR r_create_swapchain;
 static PFN_vkQueuePresentKHR r_present;
 static PFN_vkAcquireNextImageKHR r_acquire;
@@ -248,8 +250,10 @@ static void pace_wait(long long per)
 static VKAPI_ATTR VkResult VKAPI_CALL w_present(VkQueue q, const VkPresentInfoKHR *pi)
 {
     long long pace = __atomic_load_n(&f2_pace_ns, __ATOMIC_ACQUIRE);
+    f2_perf_present_begin(pace > 0 ? pace : (f2_cfg.fps >= 30 && f2_cfg.fps <= 120 ? 1000000000ll / f2_cfg.fps : 0));   /* ADPF / [perf] (f2_perf.c) */
     if (pace > 0) pace_wait(pace);
     VkResult r = r_present(q, pi);
+    f2_perf_present_end();
     unsigned long n = __atomic_add_fetch(&f2_cnt_frames, 1, __ATOMIC_RELAXED);
     double t = now_ms();
     if (n == 1) { f2_once_milestone(M_FIRST_FRAME, "FIRST FRAME presented (vkQueuePresentKHR -> %d)", r); s_window_start = t; s_st_start = t; }

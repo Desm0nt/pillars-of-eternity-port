@@ -48,6 +48,10 @@ static int fps_forced(void) { return f2_cfg.fps == 30 || f2_cfg.fps == 60 || f2_
 static float s_display_hz;      /* what Java says */
 static float s_tick_hz;         /* what the frame counter proved (0 = nothing yet) */
 static int s_wait_vsyncs;       /* W of the cap in use, 0 = the sleep path */
+/* the panel's fastest mode (Java, from the display's modes).  A cap of ONE vsync per frame needs the pacer too when the panel can run
+ * faster than the cap (16.11.2026, Galaxy S25 Ultra, One UI on Android 17): the system switched the panel 60 <-> 120 Hz every few seconds
+ * while the app was told 60 Hz, and "wait 1 vsync" then ran 75-82 fps with a cap of 60 (more heat, uneven frames). */
+static float s_max_hz;
 /* THE PRESENT PACER (pace=1, 16.11.2026; the 30 fps judder, issue #2 and the owner's Mi 14): with W = 4 (30 on a 120 Hz panel) the player's
  * vsync-counter wait gives frames that reach the screen every 33.3 ms, but Time.deltaTime spread evenly over 0..60 ms (W = 2 gave a clean
  * 16.7): the game moves things by its clock, so characters jumped.  For W >= 2 the cap is now made like this: vSyncCount 1 (the player does
@@ -67,19 +71,20 @@ static void apply_fps(void)
 {
     if (!fps_forced()) return;
     int w = 0, target = target_for(f2_cfg.fps, &w);
-    static int last_target = -1, last_fps; static float last_hz, last_tick;
-    if (target == last_target && last_fps == f2_cfg.fps && last_hz == s_display_hz && last_tick == s_tick_hz) return;
-    last_target = target; last_fps = f2_cfg.fps; last_hz = s_display_hz; last_tick = s_tick_hz; s_wait_vsyncs = w;
-    int pace = f2_cfg.pace && w >= 2;
+    static int last_target = -1, last_fps; static float last_hz, last_tick, last_max;
+    if (target == last_target && last_fps == f2_cfg.fps && last_hz == s_display_hz && last_tick == s_tick_hz && last_max == s_max_hz) return;
+    last_target = target; last_fps = f2_cfg.fps; last_hz = s_display_hz; last_tick = s_tick_hz; last_max = s_max_hz; s_wait_vsyncs = w;
+    int pace = f2_cfg.pace && (w >= 2 || (w == 1 && s_max_hz > (float)f2_cfg.fps * 1.1f));
     __atomic_store_n(&f2_pace_ns, pace ? 1000000000ll / f2_cfg.fps : 0ll, __ATOMIC_RELEASE);
     if (s_set_vsync) s_set_vsync(pace ? 1 : 0);
     if (s_set_target) s_set_target(target);
-    if (pace) f2_log("F2: screen: frame rate %d on a %.0f Hz display (vsync counter %.0f Hz): vSyncCount 1 + the present pacer, a frame every %.2f ms (%d vsyncs)",
-                     f2_cfg.fps, s_display_hz, s_tick_hz > 20 ? s_tick_hz : s_display_hz, 1000.0 / f2_cfg.fps, w);
+    if (pace) f2_log("F2: screen: frame rate %d on a %.0f Hz display (panel up to %.0f Hz, vsync counter %.0f Hz): vSyncCount 1 + the present pacer, a frame every %.2f ms (%d vsyncs)",
+                     f2_cfg.fps, s_display_hz, s_max_hz, s_tick_hz > 20 ? s_tick_hz : s_display_hz, 1000.0 / f2_cfg.fps, w);
     else f2_log("F2: screen: frame rate %d on a %.0f Hz display (vsync counter %.0f Hz): vSyncCount 0, targetFrameRate %d = %s", f2_cfg.fps, s_display_hz,
            s_tick_hz > 20 ? s_tick_hz : s_display_hz, target, w ? (w == 1 ? "every vsync" : w == 2 ? "every 2nd vsync" : "every Nth vsync") : "the engine's timer");
 }
 void f2_screen_set_display_hz(float hz) { if (hz != s_display_hz) { s_display_hz = hz; s_tick_hz = 0; } }
+void f2_screen_set_display_max_hz(float hz) { if (hz > 20 && hz < 1000) s_max_hz = hz; }
 void f2_screen_reapply_fps(void) { apply_fps(); }       /* main thread only (f2_touch.c run_pending_action) */
 /* the gear's frame rate, changed while the game runs (owner, 12.11.2026: "why a restart, the PC switches it on the fly"): any thread; the cap
  * itself is made again on the main thread (game action 3).  The display may change its mode for the new rate: Java reports that separately. */
@@ -240,8 +245,10 @@ static void ov_set_fdt(float v)
     if (s_set_fdt) s_set_fdt(v);
 }
 /* main thread, every UICamera.Update (f2_touch.c); one sample per engine frame */
+void f2_perf_note_main(void);
 void f2_screen_frame_tick(void)
 {
+    f2_perf_note_main();
     if (!f2_cfg.pacelog || !s_get_dt || !s_get_frame) return;
     static int32_t last_frame = -1; static unsigned b[8], cnt; static float mn = 1e9f, mx; static double sum, t0;
     int32_t fr = s_get_frame();

@@ -56,6 +56,7 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
     static native void nativeGameAction(int id);
     static native void nativeDisplayHz(float hz);
     static native void nativeSetFps(int fps);
+    static native void nativeDisplayMaxHz(float hz);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
     private FrameLayout layer; private PoePadView pad; private FrontMenu front; private F2Touch touch; private boolean touchMouse;
@@ -154,6 +155,7 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         StringBuilder all = new StringBuilder();
         for (android.view.Display.Mode m : d.getSupportedModes()) {
             all.append(' ').append(m.getPhysicalWidth()).append('x').append(m.getPhysicalHeight()).append('@').append(Math.round(m.getRefreshRate()));
+            if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()) maxHz = Math.max(maxHz, m.getRefreshRate());
             if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && Math.abs(m.getRefreshRate() - want) < 1.5f) best = m;
         }
         WindowManager.LayoutParams lp = getWindow().getAttributes();
@@ -175,9 +177,10 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
     }
 
     // the rate the display runs at now goes to the native side, which makes the frame cap from it (f2_screen.c); said in the log when it changes
-    private float lastHz;
+    private float lastHz, maxHz;
     private void reportHz() {
         float hz = getWindowManager().getDefaultDisplay().getRefreshRate();
+        if (libraryLoaded && maxHz > 0) try { nativeDisplayMaxHz(maxHz); } catch (UnsatisfiedLinkError e) { /* an older library */ }
         if (libraryLoaded) try { nativeDisplayHz(hz); } catch (UnsatisfiedLinkError e) { /* an older library */ }
         if (Math.abs(hz - lastHz) > 0.5f) { lastHz = hz; crumb("display runs at " + hz + " Hz"); }
         // a hint for the system's refresh-rate choice as well (Android 11+): the picture's own rate
