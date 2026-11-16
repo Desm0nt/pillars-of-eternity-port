@@ -65,7 +65,10 @@ typedef struct {
     int ctl;                  /* 1: control file f2_ctl.txt (pad buttons over adb) */
     int pump;                 /* 1: async upload pump (f2_hooks.c); without it scenes with stream textures never finish loading */
     int wide;                 /* 1: a 16:9 Screen.SetResolution request is widened to the window's aspect (f2_screen.c) */
-    int fps;                  /* 0: the game's own; 60 | 30: forced */
+    int fps;                  /* 0: the game's own; 30 | 60 | 90 | 120: forced */
+    int pacelog;              /* 1: the frame pacing histograms every 5 s (f2_vkwrap.c, f2_screen.c); 0 (default) */
+    int pace;                 /* 1 (default): a cap of 2+ vsyncs per frame is kept by f2_vkwrap.c's present pacer (f2_screen.c); 0: the player's vsync wait */
+    int res;                  /* 100: the game's own render size; 50..99: the Screen.SetResolution request scaled to this percent (f2_screen.c) */
     int icall_log;            /* 1: a line for every internal call the game resolves (f2_diag.cpp) */
     int msaa;                 /* -1: the game's own antiAliasing; 0/2/4/8 forced (f2_screen.c) */
     int touch;                /* 1: touch as the PC mouse: the game-side gates (f2_touch.c) */

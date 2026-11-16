@@ -259,6 +259,7 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         StringBuilder s = new StringBuilder("# written by the Java front end (DmActivity) at each start: the player's choices in the gear\n");
         if (p.contains(F2Gear.P_WIDE)) s.append("wide=").append(p.getInt(F2Gear.P_WIDE, 0) == 0 ? 1 : 0).append('\n');
         s.append("fps=").append(p.getInt(F2Gear.P_FPS, 60)).append('\n');
+        s.append("res=").append(p.getInt(F2Gear.P_RES, 100)).append('\n');
         if (p.contains(F2Gear.P_TOUCH)) s.append("touch=").append(p.getBoolean(F2Gear.P_TOUCH, true) ? 1 : 0).append('\n');
         GameFolder.DataRoot dr = GameFolder.findDataRoot(this);
         if (dr.complete) {

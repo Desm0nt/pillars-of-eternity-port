@@ -4,12 +4,16 @@
  *                     20:9 phone (phone run 06).  The request is widened to the window's aspect at the same height
  *                     (1600x900 -> 2000x900 on 2400x1080); the game lays its UI out for the wider picture by itself.
  *                     With wide=0 the Java side makes the window 16:9 with bars instead (DmActivity), nothing is changed here.
+ *   res=100 (default) the render size the game asks for; 50..99 = that size scaled to this percent (the gear's "Resolution", for
+ *                     weak GPUs: issue #2, Mali-G57 MC2 at 22-35 fps with 1600x900); the Android player scales the smaller
+ *                     buffer up to the window.
  *   fps=0 (default)   the game's own vSyncCount / targetFrameRate;  fps=60 | 30: forced (vSyncCount 1 | 2 and targetFrameRate).
  * How: libunity registers its icalls under short names ("Type::Method"); the generated code resolves the full name first, so a
  * full-name registration of ours wins and calls the engine's function with the changed arguments (as f2_switch_icalls.c). */
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 #include "f2_boot.h"
 
 void il2cpp_add_internal_call(const char *name, void (*method)(void));
@@ -44,6 +48,12 @@ static int fps_forced(void) { return f2_cfg.fps == 30 || f2_cfg.fps == 60 || f2_
 static float s_display_hz;      /* what Java says */
 static float s_tick_hz;         /* what the frame counter proved (0 = nothing yet) */
 static int s_wait_vsyncs;       /* W of the cap in use, 0 = the sleep path */
+/* THE PRESENT PACER (pace=1, 16.11.2026; the 30 fps judder, issue #2 and the owner's Mi 14): with W = 4 (30 on a 120 Hz panel) the player's
+ * vsync-counter wait gives frames that reach the screen every 33.3 ms, but Time.deltaTime spread evenly over 0..60 ms (W = 2 gave a clean
+ * 16.7): the game moves things by its clock, so characters jumped.  For W >= 2 the cap is now made like this: vSyncCount 1 (the player does
+ * not wait at all, the swapchain's FIFO would give the panel's rate) and the render thread sleeps in vkQueuePresentKHR until a fixed grid of
+ * 1 / fps (f2_vkwrap.c); the main thread then waits for the render thread at a steady beat, and its clock follows that. */
+long long f2_pace_ns;           /* 0 = off; read by the render thread */
 static int target_for(int fps, int *vsyncs)
 {
     float hz = s_tick_hz > 20 ? s_tick_hz : s_display_hz > 20 ? s_display_hz : 60;
@@ -60,9 +70,13 @@ static void apply_fps(void)
     static int last_target = -1, last_fps; static float last_hz, last_tick;
     if (target == last_target && last_fps == f2_cfg.fps && last_hz == s_display_hz && last_tick == s_tick_hz) return;
     last_target = target; last_fps = f2_cfg.fps; last_hz = s_display_hz; last_tick = s_tick_hz; s_wait_vsyncs = w;
-    if (s_set_vsync) s_set_vsync(0);
+    int pace = f2_cfg.pace && w >= 2;
+    __atomic_store_n(&f2_pace_ns, pace ? 1000000000ll / f2_cfg.fps : 0ll, __ATOMIC_RELEASE);
+    if (s_set_vsync) s_set_vsync(pace ? 1 : 0);
     if (s_set_target) s_set_target(target);
-    f2_log("F2: screen: frame rate %d on a %.0f Hz display (vsync counter %.0f Hz): vSyncCount 0, targetFrameRate %d = %s", f2_cfg.fps, s_display_hz,
+    if (pace) f2_log("F2: screen: frame rate %d on a %.0f Hz display (vsync counter %.0f Hz): vSyncCount 1 + the present pacer, a frame every %.2f ms (%d vsyncs)",
+                     f2_cfg.fps, s_display_hz, s_tick_hz > 20 ? s_tick_hz : s_display_hz, 1000.0 / f2_cfg.fps, w);
+    else f2_log("F2: screen: frame rate %d on a %.0f Hz display (vsync counter %.0f Hz): vSyncCount 0, targetFrameRate %d = %s", f2_cfg.fps, s_display_hz,
            s_tick_hz > 20 ? s_tick_hz : s_display_hz, target, w ? (w == 1 ? "every vsync" : w == 2 ? "every 2nd vsync" : "every Nth vsync") : "the engine's timer");
 }
 void f2_screen_set_display_hz(float hz) { if (hz != s_display_hz) { s_display_hz = hz; s_tick_hz = 0; } }
@@ -101,17 +115,22 @@ static void ov_set_resolution(int32_t w, int32_t h, int32_t mode, int32_t rate)
 {
     int32_t nw = w, nh = h;
     if (f2_cfg.wide && s_surf_w && s_surf_h && w > 0 && h > 0 && w * 9 == h * 16) {
-        if ((uint64_t)s_surf_w * 9 > (uint64_t)s_surf_h * 16 + s_surf_h) nw = (int32_t)(((uint64_t)h * s_surf_w / s_surf_h + 1) & ~1ull);        /* wider */
-        else if ((uint64_t)s_surf_w * 9 + s_surf_h < (uint64_t)s_surf_h * 16) nh = (int32_t)(((uint64_t)w * s_surf_h / s_surf_w + 1) & ~1ull);   /* narrower */
+        /* 1 % tolerance (it was 1/9: a 5:3 2000x1200 screen sat exactly on that edge and got a stretched 16:9, issue #2) */
+        if ((uint64_t)s_surf_w * 9 * 100 > (uint64_t)s_surf_h * 16 * 101) nw = (int32_t)(((uint64_t)h * s_surf_w / s_surf_h + 1) & ~1ull);        /* wider */
+        else if ((uint64_t)s_surf_w * 9 * 101 < (uint64_t)s_surf_h * 16 * 100) nh = (int32_t)(((uint64_t)w * s_surf_h / s_surf_w + 1) & ~1ull);   /* narrower */
+    }
+    if (f2_cfg.res >= 50 && f2_cfg.res < 100 && nw > 0 && nh > 0) {
+        nw = (int32_t)(((int64_t)nw * f2_cfg.res / 100) & ~1ll);
+        nh = (int32_t)(((int64_t)nh * f2_cfg.res / 100) & ~1ll);
     }
     static int n;
-    if (n++ < 8) f2_log("F2: screen: Screen.SetResolution(%d, %d, mode %d, %d Hz) -> %d x %d (window %ux%u, wide=%d)", w, h, mode, rate, nw, nh, s_surf_w, s_surf_h, f2_cfg.wide);
+    if (n++ < 8) f2_log("F2: screen: Screen.SetResolution(%d, %d, mode %d, %d Hz) -> %d x %d (window %ux%u, wide=%d, res=%d%%)", w, h, mode, rate, nw, nh, s_surf_w, s_surf_h, f2_cfg.wide, f2_cfg.res);
     s_set_resolution(nw, nh, mode, fps_forced() && f2_cfg.fps > 60 ? f2_cfg.fps : rate);
     apply_fps();
 }
 static void ov_set_vsync(int32_t v)
 {
-    int32_t nv = fps_forced() ? 0 : v;
+    int32_t nv = fps_forced() ? (__atomic_load_n(&f2_pace_ns, __ATOMIC_RELAXED) ? 1 : 0) : v;
     static int n;
     if (n++ < 4) f2_log("F2: screen: QualitySettings.vSyncCount = %d -> %d (fps=%d)", v, nv, f2_cfg.fps);
     s_set_vsync(nv);
@@ -210,10 +229,59 @@ static void ov_ab_unload(void *self, uint8_t all)
     s_ab_unload(self, all);
 }
 
+/* pacing diagnostics (the 30 fps judder, 16.11.2026): what the game's clock says per frame, and its fixed (physics) step */
+static float (*s_get_dt)(void), (*s_get_fdt)(void), (*s_get_maxdt)(void), (*s_get_scale)(void);
+static int32_t (*s_get_frame)(void);
+static void (*s_set_fdt)(float);
+static void ov_set_fdt(float v)
+{
+    static int n;
+    if (n++ < 8) f2_log("F2: pacing: the game sets Time.fixedDeltaTime = %.4f s (%.1f Hz)", v, v > 0 ? 1.0f / v : 0.0f);
+    if (s_set_fdt) s_set_fdt(v);
+}
+/* main thread, every UICamera.Update (f2_touch.c); one sample per engine frame */
+void f2_screen_frame_tick(void)
+{
+    if (!f2_cfg.pacelog || !s_get_dt || !s_get_frame) return;
+    static int32_t last_frame = -1; static unsigned b[8], cnt; static float mn = 1e9f, mx; static double sum, t0;
+    int32_t fr = s_get_frame();
+    if (fr == last_frame) return;
+    last_frame = fr;
+    float ms = s_get_dt() * 1000.0f;
+    static unsigned mb[8]; static double prev_wall;
+    { struct timespec ws; clock_gettime(CLOCK_MONOTONIC, &ws); double w = ws.tv_sec * 1000.0 + ws.tv_nsec / 1e6;
+      if (prev_wall > 0) { double d = w - prev_wall; int j = 0; static const double me[7] = { 12.5, 20.8, 29.2, 37.5, 45.8, 54.2, 70.0 }; while (j < 7 && d >= me[j]) j++; mb[j]++; }
+      prev_wall = w; }
+    static const float edge[7] = { 12.5f, 20.8f, 29.2f, 37.5f, 45.8f, 54.2f, 70.0f };
+    int k = 0; while (k < 7 && ms >= edge[k]) k++;
+    b[k]++; cnt++; sum += ms; if (ms < mn) mn = ms; if (ms > mx) mx = ms;
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    double now = ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+    if (t0 == 0) t0 = now;
+    if (now - t0 >= 5000 && cnt) {
+        f2_log("F2: pacing: Time.deltaTime ms <12.5:%u <20.8:%u <29.2:%u <37.5:%u <45.8:%u <54.2:%u <70:%u more:%u (avg %.1f min %.1f max %.1f) | fixedDeltaTime %.4f maximumDeltaTime %.3f timeScale %.2f",
+               b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], sum / cnt, mn, mx,
+               s_get_fdt ? s_get_fdt() : -1.0f, s_get_maxdt ? s_get_maxdt() : -1.0f, s_get_scale ? s_get_scale() : -1.0f);
+        f2_log("F2: pacing: main thread frame-to-frame ms <12.5:%u <20.8:%u <29.2:%u <37.5:%u <45.8:%u <54.2:%u <70:%u more:%u",
+               mb[0], mb[1], mb[2], mb[3], mb[4], mb[5], mb[6], mb[7]);
+        for (int i = 0; i < 8; i++) { b[i] = 0; mb[i] = 0; } cnt = 0; sum = 0; mn = 1e9f; mx = 0; t0 = now;
+    }
+}
+
 /* called for every icall libunity registers (f2_diag.cpp) */
 void f2_screen_engine_icall(const char *name, void (*fn)(void))
 {
     if (!name || !fn) return;
+    if (!strcmp(name, "UnityEngine.Time::get_deltaTime")) { s_get_dt = (float (*)(void))fn; return; }
+    if (!strcmp(name, "UnityEngine.Time::get_fixedDeltaTime")) { s_get_fdt = (float (*)(void))fn; return; }
+    if (!strcmp(name, "UnityEngine.Time::get_maximumDeltaTime")) { s_get_maxdt = (float (*)(void))fn; return; }
+    if (!strcmp(name, "UnityEngine.Time::get_timeScale")) { s_get_scale = (float (*)(void))fn; return; }
+    if (!strcmp(name, "UnityEngine.Time::get_frameCount")) { s_get_frame = (int32_t (*)(void))fn; return; }
+    if (!strcmp(name, "UnityEngine.Time::set_fixedDeltaTime")) {
+        s_set_fdt = (void (*)(float))fn;
+        il2cpp_add_internal_call("UnityEngine.Time::set_fixedDeltaTime(System.Single)", (void (*)(void))ov_set_fdt);
+        return;
+    }
     if (!strcmp(name, "UnityEngine.Screen::SetResolution")) {
         s_set_resolution = (void (*)(int32_t, int32_t, int32_t, int32_t))fn;
         il2cpp_add_internal_call("UnityEngine.Screen::SetResolution(System.Int32,System.Int32,UnityEngine.FullScreenMode,System.Int32)", (void (*)(void))ov_set_resolution);

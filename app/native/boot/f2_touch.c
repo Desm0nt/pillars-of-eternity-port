@@ -213,9 +213,11 @@ static void gate_gamepad(uint64_t *regs)
 
 static struct { uint64_t cam; uint8_t orig; } s_uic[32];
 static int s_nuic;
+void f2_screen_frame_tick(void);
 static void gate_uicamera(uint64_t *regs)
 {
     s_hits[1]++;
+    f2_screen_frame_tick();
     if (!f2_cfg.touch) return;
     uint64_t c = regs[0];
     if (!c) return;

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <errno.h>
 #include "f2_boot.h"
 
 static PFN_vkGetInstanceProcAddr r_gipa;
@@ -230,8 +231,24 @@ void f2_frame_stats(float out[4])
  * own transform is a rotation, so every present / acquire answers VK_SUBOPTIMAL_KHR, and the engine logs each one with a
  * 10-frame backtrace (VKSwapChain.cpp:477; 1978 times in 45 s of phone run 05).  The picture is right (the compositor
  * rotates it), there is nothing the engine could do about it, so the driver's hint is not passed on. */
+/* the present pacer (f2_screen.c, pace=1): a fixed grid of 1 / fps; a present more than a frame late starts the grid again from itself */
+extern long long f2_pace_ns;
+static void pace_wait(long long per)
+{
+    static long long next;
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    long long now = ts.tv_sec * 1000000000ll + ts.tv_nsec;
+    if (!next || now - next > per || next - now > 2 * per) next = now;
+    else if (next > now) {
+        ts.tv_sec = (time_t)(next / 1000000000ll); ts.tv_nsec = (long)(next % 1000000000ll);
+        while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR) {}
+    }
+    next += per;
+}
 static VKAPI_ATTR VkResult VKAPI_CALL w_present(VkQueue q, const VkPresentInfoKHR *pi)
 {
+    long long pace = __atomic_load_n(&f2_pace_ns, __ATOMIC_ACQUIRE);
+    if (pace > 0) pace_wait(pace);
     VkResult r = r_present(q, pi);
     unsigned long n = __atomic_add_fetch(&f2_cnt_frames, 1, __ATOMIC_RELAXED);
     double t = now_ms();
@@ -245,7 +262,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL w_present(VkQueue q, const VkPresentInfoKH
         r = VK_SUCCESS;
     }
     s_window_frames++;
+    /* pacing diagnostics (the 30 fps judder, 16.11.2026): intervals between present calls in buckets of the 120 Hz grid */
+    static double s_pp_last; static unsigned s_pp_b[8]; static double s_pp_min = 1e9, s_pp_max;
+    if (s_pp_last > 0) {
+        double d = t - s_pp_last;
+        static const double edge[7] = { 12.5, 20.8, 29.2, 37.5, 45.8, 54.2, 70.0 };     /* ~1, 2, 3, 4, 5, 6 ticks of 8.33 ms, more */
+        int b = 0; while (b < 7 && d >= edge[b]) b++;
+        s_pp_b[b]++; if (d < s_pp_min) s_pp_min = d; if (d > s_pp_max) s_pp_max = d;
+    }
+    s_pp_last = t;
     if (t - s_window_start >= 5000) {
+        if (f2_cfg.pacelog) f2_log("F2: pacing: present-to-present ms <12.5:%u <20.8:%u <29.2:%u <37.5:%u <45.8:%u <54.2:%u <70:%u more:%u (min %.1f max %.1f)",
+               s_pp_b[0], s_pp_b[1], s_pp_b[2], s_pp_b[3], s_pp_b[4], s_pp_b[5], s_pp_b[6], s_pp_b[7], s_pp_min, s_pp_max);
+        for (int i = 0; i < 8; i++) s_pp_b[i] = 0; s_pp_min = 1e9; s_pp_max = 0;
         f2_log("F2: frames: %lu total, %.1f fps over the last %.1f s (shaders %lu, pipelines %lu, pipeline time %.0f ms)", n,
                s_window_frames * 1000.0 / (t - s_window_start), (t - s_window_start) / 1000.0, f2_cnt_shaders, f2_cnt_pipelines, s_pipe_ms);
         f2_screen_note_fps((float)(s_window_frames * 1000.0 / (t - s_window_start)));      /* the frame cap checks itself against this */

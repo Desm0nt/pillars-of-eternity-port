@@ -17,7 +17,8 @@ import java.util.List;
 
 final class F2Gear {
     private F2Gear() {}
-    static final String P_WIDE = "aspect", P_FPS = "poe_fps", P_TOUCH = "poe_touch_mouse", P_HOLD = "poe_hold_ms";
+    static final String P_WIDE = "aspect", P_FPS = "poe_fps", P_TOUCH = "poe_touch_mouse", P_HOLD = "poe_hold_ms", P_RES = "poe_res";
+    static final int[] RES = {100, 85, 75, 67, 50};
     static final int[] HOLDS = {300, 400, 500, 700, 900};
     static final int[] FPS = {30, 60, 90, 120};
     // the codes the game knows (it reads the first two letters of what the "console" reports); "" = as it is now (f2_lang.txt untouched)
@@ -27,7 +28,7 @@ final class F2Gear {
     static List<GearSettings.Section> sections(DmActivity a, GearSettings g) {
         List<GearSettings.Section> s = new ArrayList<>();
         // the port own switches first, on the dialog itself (owner, 12.11.2026: behind a "Pillars of Eternity" button they were not found)
-        s.add(fps(a)); s.add(picture()); s.add(touch()); s.add(hold()); s.add(storage(a));
+        s.add(fps(a)); s.add(resolution()); s.add(picture()); s.add(touch()); s.add(hold()); s.add(storage(a));
         String[] l = LANG_NAMES.clone(); l[0] = g.t("Не менять", "Leave as it is");
         s.add(GearPages.gameLanguage(LANG_CODES, l, false));
         s.add(GearPages.fpsCounter());
@@ -63,6 +64,20 @@ final class F2Gear {
                 r = s.radios(box, l, GearSettings.indexOf(HOLDS, s.gamePrefs().getInt(P_HOLD, 500), 2), true);
             }
             public void save(GearSettings s, SharedPreferences.Editor game, SharedPreferences.Editor pad) { game.putInt(P_HOLD, HOLDS[GearSettings.picked(r)]); }
+        };
+    }
+    // render size for weak GPUs (native/boot/f2_screen.c scales the game's Screen.SetResolution request; issue #2)
+    static GearSettings.Section resolution() {
+        return new GearSettings.Section() {
+            RadioGroup r;
+            public void build(GearSettings s, LinearLayout box) {
+                s.heading(box, s.when(s.t("Разрешение, %", "Resolution, %"), false));
+                String[] l = new String[RES.length]; for (int i = 0; i < l.length; i++) l[i] = String.valueOf(RES[i]);
+                r = s.radios(box, l, GearSettings.indexOf(RES, s.gamePrefs().getInt(P_RES, 100), 0), true);
+                s.note(box, s.t("Меньше — быстрее на слабых GPU (Mali, PowerVR), но картинка мягче. 100 — как на Switch в доке.",
+                    "Lower = faster on weak GPUs (Mali, PowerVR), but a softer picture. 100 = the docked Switch."));
+            }
+            public void save(GearSettings s, SharedPreferences.Editor game, SharedPreferences.Editor pad) { game.putInt(P_RES, RES[GearSettings.picked(r)]); }
         };
     }
     static GearSettings.Section picture() {
