@@ -110,9 +110,9 @@ def unity_editor():
 
 
 def version():
-    """app/VERSION 'X.Y.Z' -> (name, versionCode = 100000 + X*10000 + Y*100 + Z), the sibling ports' formula"""
+    """app/VERSION 'X.Y.Z' or 'X.Y.Z-tag' (a test build) -> (name, versionCode = 100000 + X*10000 + Y*100 + Z), the sibling ports' formula"""
     v = (REPO / 'app' / 'VERSION').read_text(encoding='utf-8').strip()
-    x, y, z = (int(p) for p in v.split('.'))
+    x, y, z = (int(p) for p in v.split('-', 1)[0].split('.'))
     if not (0 <= y < 100 and 0 <= z < 100):
         fail(f'app/VERSION {v}: minor and patch must be 0..99')
     return v, 100000 + x * 10000 + y * 100 + z
