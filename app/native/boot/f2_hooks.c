@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <link.h>
 #include <elf.h>
 #include <sys/mman.h>
@@ -123,23 +124,102 @@ static void apply_vendor_patch(void)
  * goes on with slot index -1, i.e. it uses a neighbouring field of the allocator as the table: memory corruption, and soon
  * MemoryManager::Deallocate hands a pointer to free() that malloc never returned -> abort (Xiaomi 13 Pro, Android 15, phone run 28: every
  * new game died while the first area loaded; on the Xiaomi 14 Ultra the heap happened to fit 4 windows).  Newer Android spreads malloc's
- * regions wider, so this is a matter of time on any phone.  Three patches per player variant (tools/alloc_sites.py prints the places):
- *   register (AllocationPage<0>): no free slot -> a flag is set in OUR memory and the allocation is simply not recorded;
- *   deregister (AllocationPage<1>): key not among the slots -> nothing to do;
- *   query (AllocationPage<2>, behind Contains()): key not among the slots -> "yes" once the flag is set (so the block is freed by the
- *   allocator it came from, header and all), "no" as before while every allocation is still recorded.
+ * regions wider, so this is a matter of time on any phone.
+ * The windows beyond the five are recorded HERE, exactly: a hash set of (pointer, allocator).  The three places where the player meets an
+ * unknown window become calls into this file (tools/alloc_sites.py prints the places):
+ *   register (AllocationPage<0>): no free slot -> f2_uda_reg(this, p): the block is recorded in the set;
+ *   deregister (AllocationPage<1>): key not among the slots -> f2_uda_dereg(this, p): removed from the set;
+ *   query (AllocationPage<2>, behind Contains()): key not among the slots -> f2_uda_query(this, p): "mine" only for a block of the set that
+ *     this allocator registered.
  *   keep (AllocationPage<1>, the end): the player frees a window's top table and empties its slot when the window's last block goes, and the
- *     next NEW window takes that slot.  Blocks of that window allocated while all slots were full were never recorded, so now the key is
- *     known, their page bit is not set, Contains() says "not mine" and the block goes to raw free() at its header offset -> Scudo "misaligned
- *     pointer when deallocating" (Redmi Note 13 Pro 4G / Helio G99, Android 16, GitHub issue #4: every start died 0.9 s in, in a jni::Class
- *     release).  The branch that frees the top table is made unconditional-skip: a slot, once taken, belongs to its window for the whole run
- *     (1 KB per window), so every window is either fully recorded or fully unrecorded.
- * f2_config.txt alloc_fix=0 leaves the player as it is. */
-static uint8_t s_alloc_overflow;      /* set by the patched register path */
-typedef struct { const char *build_id; uint32_t reg_err, reg_old, reg_epi, query, dereg, dereg_epi, keep, keep_old; } f2_alloc_patch_t;
+ *     next NEW window would take that slot while some of its blocks sit in the set.  The branch that frees the top table is made
+ *     unconditional-skip: a slot, once taken, belongs to its window for the whole run (1 KB per window), so every window lives either in the
+ *     slots or in the set, never in both.
+ * History (GitHub issue #4, Redmi Note 13 Pro 4G / Helio G99, Android 16: every start died 0.5-0.9 s in, Scudo "misaligned pointer when
+ * deallocating", in jni::Class::operator jclass releasing a Ref that the player's start-up heap (DynamicHeapAllocator) made at static init):
+ * the first version did not record the extra windows, its query said "mine" for EVERY unknown window once the five were full.  Then a
+ * UnityDefaultAllocator claimed blocks of the other allocators too (MemoryManager asks it first) and freed them as its own: free(p - 8). */
+static uint8_t s_alloc_overflow;      /* a block went to the set at least once */
+typedef struct { uintptr_t p, owner; } f2_uda_ent_t;
+static f2_uda_ent_t *s_uda_tab;       /* open addressing, linear probing, p == 0: empty; capacity a power of two */
+static size_t s_uda_cap, s_uda_n, s_uda_max;
+static pthread_mutex_t s_uda_mu = PTHREAD_MUTEX_INITIALIZER;
+static size_t uda_slot(uintptr_t p, size_t cap) { return (size_t)((((uint64_t)p >> 3) * 0x9e3779b97f4a7c15ull) >> 20) & (cap - 1); }
+static int uda_grow(void)
+{
+    size_t cap = s_uda_cap ? s_uda_cap * 2 : 4096;
+    f2_uda_ent_t *t = (f2_uda_ent_t *)calloc(cap, sizeof *t);
+    if (!t) return -1;
+    for (size_t i = 0; i < s_uda_cap; i++) {
+        if (!s_uda_tab[i].p) continue;
+        size_t j = uda_slot(s_uda_tab[i].p, cap);
+        while (t[j].p) j = (j + 1) & (cap - 1);
+        t[j] = s_uda_tab[i];
+    }
+    free(s_uda_tab);
+    s_uda_tab = t; s_uda_cap = cap;
+    return 0;
+}
+/* Called by the player's code, under that allocator's own lock; nothing of the player is called from here. */
+static void f2_uda_reg(void *self, void *ptr)
+{
+    uintptr_t p = (uintptr_t)ptr;
+    if (!p) return;
+    pthread_mutex_lock(&s_uda_mu);
+    if ((s_uda_n + 1) * 2 > s_uda_cap && uda_grow() != 0) { pthread_mutex_unlock(&s_uda_mu); return; }
+    size_t j = uda_slot(p, s_uda_cap);
+    while (s_uda_tab[j].p && s_uda_tab[j].p != p) j = (j + 1) & (s_uda_cap - 1);
+    if (!s_uda_tab[j].p) { s_uda_n++; if (s_uda_n > s_uda_max) s_uda_max = s_uda_n; }
+    s_uda_tab[j].p = p; s_uda_tab[j].owner = (uintptr_t)self;
+    s_alloc_overflow = 1;
+    pthread_mutex_unlock(&s_uda_mu);
+}
+static void f2_uda_dereg(void *self, void *ptr)
+{
+    uintptr_t p = (uintptr_t)ptr;
+    (void)self;
+    if (!p) return;
+    pthread_mutex_lock(&s_uda_mu);
+    if (s_uda_cap) {
+        size_t m = s_uda_cap - 1, i = uda_slot(p, s_uda_cap);
+        while (s_uda_tab[i].p && s_uda_tab[i].p != p) i = (i + 1) & m;
+        if (s_uda_tab[i].p == p) {
+            /* backward-shift deletion (no tombstones): pull later entries of the run into the hole when their home allows it */
+            size_t k = i;
+            for (;;) {
+                k = (k + 1) & m;
+                if (!s_uda_tab[k].p) break;
+                size_t h = uda_slot(s_uda_tab[k].p, s_uda_cap);
+                /* entry k stays if its home h lies cyclically in (i, k] */
+                int stays = i <= k ? (h > i && h <= k) : (h > i || h <= k);
+                if (stays) continue;
+                s_uda_tab[i] = s_uda_tab[k];
+                i = k;
+            }
+            s_uda_tab[i].p = 0; s_uda_tab[i].owner = 0;
+            s_uda_n--;
+        }
+    }
+    pthread_mutex_unlock(&s_uda_mu);
+}
+static int f2_uda_query(void *self, const void *ptr)
+{
+    uintptr_t p = (uintptr_t)ptr;
+    int r = 0;
+    if (!p) return 0;
+    pthread_mutex_lock(&s_uda_mu);
+    if (s_uda_cap) {
+        size_t j = uda_slot(p, s_uda_cap);
+        while (s_uda_tab[j].p && s_uda_tab[j].p != p) j = (j + 1) & (s_uda_cap - 1);
+        r = s_uda_tab[j].p == p && s_uda_tab[j].owner == (uintptr_t)self;
+    }
+    pthread_mutex_unlock(&s_uda_mu);
+    return r;
+}
+typedef struct { const char *build_id; uint32_t reg_err, reg_old, reg_epi, query, dereg, dereg_epi, keep, keep_old, free_slot; } f2_alloc_patch_t;
 static const f2_alloc_patch_t k_alloc[] = {
-    { "77482bdd52bc8403622024b79c44fe6d12c4c6cc", 0x476880, 0xd00055c8u, 0x476ab8, 0x476758, 0x476b28, 0x476ce4, 0x476cc0, 0x35000109u },   /* Release */
-    { "65a4f5f769a495172096da9070547c0df16764fe", 0x65de3c, 0xd0007feau, 0x65e074, 0x65dcf4, 0x65e0e8, 0x65e294, 0x65e274, 0x350000e8u },   /* Development */
+    { "77482bdd52bc8403622024b79c44fe6d12c4c6cc", 0x476880, 0xd00055c8u, 0x476ab8, 0x476758, 0x476b28, 0x476ce4, 0x476cc0, 0x35000109u, 0x476854 },   /* Release */
+    { "65a4f5f769a495172096da9070547c0df16764fe", 0x65de3c, 0xd0007feau, 0x65e074, 0x65dcf4, 0x65e0e8, 0x65e294, 0x65e274, 0x350000e8u, 0x65de10 },   /* Development */
 };
 /* ImageConversion.LoadImage into a texture that is DXT1 / DXT5 already.  The game loads the player's portraits (loose PNG files) INTO the portrait
  * textures its prefabs carry, and those are DXT5 assets.  LoadMemoryBufferIntoTextureInternal: "compress" = the texture is DXT AND the GPU
@@ -225,33 +305,56 @@ static int patch_words(uintptr_t addr, uint32_t old_first, const uint32_t *w, in
     return 0;
 }
 static uint32_t enc_b(uintptr_t from, uintptr_t to) { return 0x14000000u | (uint32_t)((((intptr_t)to - (intptr_t)from) >> 2) & 0x3ffffff); }
+/* A call into C at a place of the player's code: [mov x0, x19 ; mov x1, x20 ;] ldr x16, =fn ; blr x16 ; b epi  (or br x16: a tail call
+ * from a leaf whose x0 / x1 are this / p already) ; nop to align ; .quad fn.  Returns the number of words written to w (at most 8). */
+static int stub_call(uintptr_t at, void *fn, int args, uintptr_t epi, uint32_t *w)
+{
+    int n = 0;
+    if (args) { w[n++] = 0xaa1303e0u; w[n++] = 0xaa1403e1u; }       /* mov x0, x19 ; mov x1, x20 */
+    int ldr = n++;
+    if (epi) { w[n++] = 0xd63f0200u; w[n] = enc_b(at + 4 * (uintptr_t)n, epi); n++; }   /* blr x16 ; b epi */
+    else w[n++] = 0xd61f0200u;                                      /* br x16 */
+    if ((at + 4 * (uintptr_t)n) & 7) w[n++] = 0xd503201fu;          /* nop */
+    w[ldr] = 0x58000010u | ((uint32_t)(n - ldr) << 5);              /* ldr x16, <the quad> */
+    uint64_t a = (uint64_t)(uintptr_t)fn;
+    memcpy(&w[n], &a, 8);
+    return n + 2;
+}
 static void apply_alloc_patch(void)
 {
     if (!f2_cfg.alloc_fix) { f2_log("F2: allocator page table: the player's own (alloc_fix=0)"); return; }
     for (unsigned i = 0; i < sizeof k_alloc / sizeof k_alloc[0]; i++) {
         const f2_alloc_patch_t *p = &k_alloc[i];
         if (strcmp(p->build_id, s_build_id)) continue;
-        uint64_t flag = (uint64_t)(uintptr_t)&s_alloc_overflow;
-        /* register, at the head of the old error path:  ldr x8, =flag ; mov w9, #1 ; strb w9, [x8] ; b epilogue ; .quad flag */
-        uint32_t reg[6] = { 0x58000088u, 0x52800029u, 0x39000109u, enc_b(s_ubase + p->reg_err + 12, s_ubase + p->reg_epi), 0, 0 };
-        memcpy(&reg[4], &flag, 8);
-        /* query, where the key was not found:  ldr x8, =flag ; ldrb w0, [x8] ; ret ; .quad flag */
-        uint32_t qry[5] = { 0x58000068u, 0x39400100u, 0xd65f03c0u, 0, 0 };
-        memcpy(&qry[3], &flag, 8);
-        uint32_t der[1] = { enc_b(s_ubase + p->dereg, s_ubase + p->dereg_epi) };
-        int bad = patch_words(s_ubase + p->reg_err, p->reg_old, reg, 6);
-        bad |= patch_words(s_ubase + p->query, 0xaa1f03eau /* mov x10, xzr */, qry, 5);
-        bad |= patch_words(s_ubase + p->dereg, 0xaa1f03e9u /* mov x9, xzr */, der, 1);
+        uint32_t reg[8], qry[8], der[8];
+        int nr = stub_call(s_ubase + p->reg_err, (void *)f2_uda_reg, 1, s_ubase + p->reg_epi, reg);
+        int nq = stub_call(s_ubase + p->query, (void *)f2_uda_query, 0, 0, qry);
+        int nd = stub_call(s_ubase + p->dereg, (void *)f2_uda_dereg, 1, s_ubase + p->dereg_epi, der);
+        int bad = patch_words(s_ubase + p->reg_err, p->reg_old, reg, nr);
+        bad |= patch_words(s_ubase + p->query, 0xaa1f03eau /* mov x10, xzr */, qry, nq);
+        bad |= patch_words(s_ubase + p->dereg, 0xaa1f03e9u /* mov x9, xzr */, der, nd);
         /* keep: "cbnz wN, <skip>" (the top table still has blocks) -> "b <skip>": the top table and its slot are never given up */
         uint32_t keep[1] = { enc_b(s_ubase + p->keep, s_ubase + p->keep + 4 * ((p->keep_old >> 5) & 0x7ffffu)) };
         bad |= patch_words(s_ubase + p->keep, p->keep_old, keep, 1);
+        /* alloc_test=1: register's "an empty slot is here" (cbz x11, <take it>) -> nop: windows met from now on all go to the side table */
+        if (f2_cfg.alloc_test) {
+            uint32_t nop[1] = { 0xd503201fu };
+            int t = patch_words(s_ubase + p->free_slot, 0xb400010bu, nop, 1);
+            f2_log("F2: allocator page table: alloc_test=1 %s: windows met after start-up skip the free slots (libunity+0x%x)", t ? "[RED] NOT applied" : "applied", p->free_slot);
+        }
         f2_log("F2: allocator page table: %s (libunity+0x%x, +0x%x, +0x%x, +0x%x)", bad ? "[RED] patch FAILED: a heap wider than five 4 GB windows will crash the player"
-               : "allocations beyond its five 4 GB windows are left unrecorded instead of corrupting it, a window keeps its slot for the whole run",
+               : "blocks beyond its five 4 GB windows are recorded in a side table (pointer, allocator), a window keeps its slot for the whole run",
                p->reg_err, p->query, p->dereg, p->keep);
         return;
     }
 }
 int f2_alloc_overflowed(void) { return s_alloc_overflow; }
+void f2_alloc_side_stats(unsigned long *now, unsigned long *peak)
+{
+    pthread_mutex_lock(&s_uda_mu);
+    *now = s_uda_n; *peak = s_uda_max;
+    pthread_mutex_unlock(&s_uda_mu);
+}
 
 /* ---- unity_trace=1 (f2_config.txt): call counters at the entries of the player's JNI natives and of its start-up functions, to see how far a
  * player variant gets (the Release player stopped before any engine work, phone run 29).  Same stub as the loader's game gates: the entry

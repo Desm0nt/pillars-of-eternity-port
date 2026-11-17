@@ -75,6 +75,7 @@ typedef struct {
     int touch_log;            /* 1: diagnostics gates in NGUI (f2_touch.c) */
     int any_gpu;              /* 1: the engine's Vulkan vendor list is opened to any vendor (f2_hooks.c) */
     int alloc_fix;            /* 1: the player's allocator page table survives a heap wider than five 4 GB windows (f2_hooks.c) */
+    int alloc_test;           /* 1 (test only): after start-up no new window gets a slot, all go to the side table (exercises alloc_fix) */
     int unity_trace;          /* 1: call counters at the player's JNI natives and start-up functions (f2_hooks.c) */
     int tsb_fix;              /* 1: the player's ThreadedStreamBuffer hand-shake loads made load-acquire (lost wake-up = start-up hang; f2_hooks.c) */
     int stall_dump;           /* number of stall reports (thread list + stacks) per run when nothing moves for 10 s (f2_crash.c; 0 = off) */

@@ -15,6 +15,7 @@
 #include "f2_boot.h"
 
 int f2_alloc_overflowed(void);
+void f2_alloc_side_stats(unsigned long *now, unsigned long *peak);
 f2_config_t f2_cfg = {
     .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1,
     .invoke_log = 60, .throw_log = 300, .open_log = 400, .heartbeat = 5, .crash = 1, .ctl = 1,
@@ -148,6 +149,7 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "pacelog")) f2_cfg.pacelog = atoi(v);
         else if (!strcmp(k, "unity_trace")) f2_cfg.unity_trace = atoi(v);
         else if (!strcmp(k, "alloc_fix")) f2_cfg.alloc_fix = atoi(v);
+        else if (!strcmp(k, "alloc_test")) f2_cfg.alloc_test = atoi(v);
         else if (!strcmp(k, "tsb_fix")) f2_cfg.tsb_fix = atoi(v);
         else if (!strcmp(k, "stall_dump")) f2_cfg.stall_dump = atoi(v);
         else if (!strcmp(k, "any_gpu")) f2_cfg.any_gpu = atoi(v);
@@ -201,8 +203,8 @@ static void *heartbeat(void *arg)
                (long)(t.tv_sec - s_t0.tv_sec), inv, thr, f2_cnt_opens, f2_cnt_open_fail, f2_cnt_astc_opens, f2_cnt_frames, f2_cnt_shaders,
                f2_cnt_shader_fail, f2_cnt_pipelines, f2_cnt_pipeline_fail, f2_cnt_unity_lines, f2_cnt_unity_errors, f2_cnt_pump,
                same ? " [NO PROGRESS]" : "", li ? li : "-");
-        static int said_overflow;
-        if (!said_overflow && f2_alloc_overflowed()) { said_overflow = 1; f2_log("F2: the player's allocator ran out of its five 4 GB windows: later allocations are unrecorded (handled by the alloc_fix patch)"); }
+        static unsigned long said_peak;   /* logged at the first block in the side table and whenever its peak doubles */
+        if (f2_alloc_overflowed()) { unsigned long n, pk; f2_alloc_side_stats(&n, &pk); if (pk >= 2 * said_peak) { said_peak = pk ? pk : 1; f2_log("F2: the player's allocator uses more than its five 4 GB windows: %lu blocks in the side table now (peak %lu)", n, pk); } }
     }
     return NULL;
 }
