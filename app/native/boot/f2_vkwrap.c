@@ -140,6 +140,32 @@ static VKAPI_ATTR VkResult VKAPI_CALL w_create_device(VkPhysicalDevice pd, const
                "fragmentStoresAndAtomics %d", f->textureCompressionBC, f->textureCompressionASTC_LDR, f->textureCompressionETC2, f->geometryShader,
                f->tessellationShader, f->samplerAnisotropy, f->depthClamp, f->shaderClipDistance, f->shaderCullDistance, f->fragmentStoresAndAtomics);
     }
+    /* 0.1.2-test2: memory types (uncached host memory read by the CPU is slow) and the layers really active (Samsung's GPU Control
+     * layer is injected by the system on some phones) */
+    PFN_vkGetPhysicalDeviceMemoryProperties gm = r_gipa && s_instance ? (PFN_vkGetPhysicalDeviceMemoryProperties)r_gipa(s_instance, "vkGetPhysicalDeviceMemoryProperties") : NULL;
+    if (gm) {
+        VkPhysicalDeviceMemoryProperties mp; memset(&mp, 0, sizeof mp); gm(pd, &mp);
+        char mt[800]; size_t w = 0; mt[0] = 0;
+        for (uint32_t i = 0; i < mp.memoryTypeCount && w + 40 < sizeof mt; i++) {
+            VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+            w += (size_t)snprintf(mt + w, sizeof mt - w, " %u:heap%u%s%s%s%s%s", i, mp.memoryTypes[i].heapIndex, f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? "+DL" : "",
+                                  f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ? "+HV" : "", f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ? "+HC" : "",
+                                  f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? "+CACHED" : "", f & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT ? "+LAZY" : "");
+        }
+        for (uint32_t i = 0; i < mp.memoryHeapCount && w + 40 < sizeof mt; i++)
+            w += (size_t)snprintf(mt + w, sizeof mt - w, " | heap%u %llu MB%s", i, (unsigned long long)(mp.memoryHeaps[i].size >> 20),
+                                  mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT ? " DL" : "");
+        f2_log("F2: vk memory types:%s", mt);
+    }
+    PFN_vkEnumerateDeviceLayerProperties dl = r_gipa && s_instance ? (PFN_vkEnumerateDeviceLayerProperties)r_gipa(s_instance, "vkEnumerateDeviceLayerProperties") : NULL;
+    PFN_vkEnumerateInstanceLayerProperties il = r_gipa ? (PFN_vkEnumerateInstanceLayerProperties)r_gipa(NULL, "vkEnumerateInstanceLayerProperties") : NULL;
+    char ls[600]; size_t lw = 0; ls[0] = 0;
+    VkLayerProperties lp[16]; uint32_t ln = 16;
+    if (il && il(&ln, lp) >= 0) for (uint32_t i = 0; i < ln && lw + 80 < sizeof ls; i++) lw += (size_t)snprintf(ls + lw, sizeof ls - lw, " %s", lp[i].layerName);
+    lw += (size_t)snprintf(ls + lw, sizeof ls - lw, " | device:");
+    ln = 16;
+    if (dl && dl(pd, &ln, lp) >= 0) for (uint32_t i = 0; i < ln && lw + 80 < sizeof ls; i++) lw += (size_t)snprintf(ls + lw, sizeof ls - lw, " %s", lp[i].layerName);
+    f2_log("F2: vk layers available: instance:%s", ls);
     if (f2_cfg.bc_hide) f2_log("F2: bc_hide: %lu BC queries answered 'not supported' before vkCreateDevice%s", s_bc_hidden,
                                s_bc_hidden ? "" : "  [RED: the player asked nothing we could hide: check vkwrap=1]");
     if (r == VK_SUCCESS) f2_once_milestone(M_VK_DEVICE, "Vulkan device created: %s (api %u.%u.%u)", pp.deviceName, VK_VERSION_MAJOR(pp.apiVersion),

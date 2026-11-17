@@ -18,7 +18,7 @@ int f2_alloc_overflowed(void);
 f2_config_t f2_cfg = {
     .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1,
     .invoke_log = 60, .throw_log = 300, .open_log = 400, .heartbeat = 5, .crash = 1, .ctl = 1,
-    .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .res = 100, .pace = 1, .adpf = 1, .perflog = 1, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1, .tsb_fix = 1, .stall_dump = 3,
+    .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .res = 100, .pace = 1, .adpf = 1, .perflog = 1, .prof = 2000, .sysdiag = 1, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1, .tsb_fix = 1, .stall_dump = 3,
 };
 unsigned long f2_cnt_opens, f2_cnt_open_fail, f2_cnt_frames, f2_cnt_shaders, f2_cnt_shader_fail,
     f2_cnt_pipelines, f2_cnt_pipeline_fail, f2_cnt_unity_lines, f2_cnt_unity_errors;
@@ -148,6 +148,8 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "pacelog")) f2_cfg.pacelog = atoi(v);
         else if (!strcmp(k, "adpf")) f2_cfg.adpf = atoi(v);
         else if (!strcmp(k, "perflog")) f2_cfg.perflog = atoi(v);
+        else if (!strcmp(k, "prof")) f2_cfg.prof = atoi(v);
+        else if (!strcmp(k, "sysdiag")) f2_cfg.sysdiag = atoi(v);
         else if (!strcmp(k, "unity_trace")) f2_cfg.unity_trace = atoi(v);
         else if (!strcmp(k, "alloc_fix")) f2_cfg.alloc_fix = atoi(v);
         else if (!strcmp(k, "tsb_fix")) f2_cfg.tsb_fix = atoi(v);
