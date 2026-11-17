@@ -128,12 +128,18 @@ static void apply_vendor_patch(void)
  *   deregister (AllocationPage<1>): key not among the slots -> nothing to do;
  *   query (AllocationPage<2>, behind Contains()): key not among the slots -> "yes" once the flag is set (so the block is freed by the
  *   allocator it came from, header and all), "no" as before while every allocation is still recorded.
+ *   keep (AllocationPage<1>, the end): the player frees a window's top table and empties its slot when the window's last block goes, and the
+ *     next NEW window takes that slot.  Blocks of that window allocated while all slots were full were never recorded, so now the key is
+ *     known, their page bit is not set, Contains() says "not mine" and the block goes to raw free() at its header offset -> Scudo "misaligned
+ *     pointer when deallocating" (Redmi Note 13 Pro 4G / Helio G99, Android 16, GitHub issue #4: every start died 0.9 s in, in a jni::Class
+ *     release).  The branch that frees the top table is made unconditional-skip: a slot, once taken, belongs to its window for the whole run
+ *     (1 KB per window), so every window is either fully recorded or fully unrecorded.
  * f2_config.txt alloc_fix=0 leaves the player as it is. */
 static uint8_t s_alloc_overflow;      /* set by the patched register path */
-typedef struct { const char *build_id; uint32_t reg_err, reg_old, reg_epi, query, dereg, dereg_epi; } f2_alloc_patch_t;
+typedef struct { const char *build_id; uint32_t reg_err, reg_old, reg_epi, query, dereg, dereg_epi, keep, keep_old; } f2_alloc_patch_t;
 static const f2_alloc_patch_t k_alloc[] = {
-    { "77482bdd52bc8403622024b79c44fe6d12c4c6cc", 0x476880, 0xd00055c8u, 0x476ab8, 0x476758, 0x476b28, 0x476ce4 },   /* Release */
-    { "65a4f5f769a495172096da9070547c0df16764fe", 0x65de3c, 0xd0007feau, 0x65e074, 0x65dcf4, 0x65e0e8, 0x65e294 },   /* Development */
+    { "77482bdd52bc8403622024b79c44fe6d12c4c6cc", 0x476880, 0xd00055c8u, 0x476ab8, 0x476758, 0x476b28, 0x476ce4, 0x476cc0, 0x35000109u },   /* Release */
+    { "65a4f5f769a495172096da9070547c0df16764fe", 0x65de3c, 0xd0007feau, 0x65e074, 0x65dcf4, 0x65e0e8, 0x65e294, 0x65e274, 0x350000e8u },   /* Development */
 };
 /* ImageConversion.LoadImage into a texture that is DXT1 / DXT5 already.  The game loads the player's portraits (loose PNG files) INTO the portrait
  * textures its prefabs carry, and those are DXT5 assets.  LoadMemoryBufferIntoTextureInternal: "compress" = the texture is DXT AND the GPU
@@ -236,8 +242,12 @@ static void apply_alloc_patch(void)
         int bad = patch_words(s_ubase + p->reg_err, p->reg_old, reg, 6);
         bad |= patch_words(s_ubase + p->query, 0xaa1f03eau /* mov x10, xzr */, qry, 5);
         bad |= patch_words(s_ubase + p->dereg, 0xaa1f03e9u /* mov x9, xzr */, der, 1);
-        f2_log("F2: allocator page table: %s (libunity+0x%x, +0x%x, +0x%x)", bad ? "[RED] patch FAILED: a heap wider than five 4 GB windows will crash the player"
-               : "allocations beyond its five 4 GB windows are left unrecorded instead of corrupting it", p->reg_err, p->query, p->dereg);
+        /* keep: "cbnz wN, <skip>" (the top table still has blocks) -> "b <skip>": the top table and its slot are never given up */
+        uint32_t keep[1] = { enc_b(s_ubase + p->keep, s_ubase + p->keep + 4 * ((p->keep_old >> 5) & 0x7ffffu)) };
+        bad |= patch_words(s_ubase + p->keep, p->keep_old, keep, 1);
+        f2_log("F2: allocator page table: %s (libunity+0x%x, +0x%x, +0x%x, +0x%x)", bad ? "[RED] patch FAILED: a heap wider than five 4 GB windows will crash the player"
+               : "allocations beyond its five 4 GB windows are left unrecorded instead of corrupting it, a window keeps its slot for the whole run",
+               p->reg_err, p->query, p->dereg, p->keep);
         return;
     }
 }
