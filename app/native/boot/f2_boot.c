@@ -17,7 +17,7 @@
 int f2_alloc_overflowed(void);
 void f2_alloc_side_stats(unsigned long *now, unsigned long *peak);
 f2_config_t f2_cfg = {
-    .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1,
+    .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1, .rp_opt = -1,
     .invoke_log = 60, .throw_log = 300, .open_log = 400, .heartbeat = 5, .crash = 1, .ctl = 1,
     .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .res = 100, .pace = 1, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1, .tsb_fix = 1, .stall_dump = 3,
 };
@@ -159,6 +159,8 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "icall_log")) f2_cfg.icall_log = atoi(v);
         else if (!strcmp(k, "fps")) f2_cfg.fps = atoi(v);
         else if (!strcmp(k, "tex_set")) snprintf(f2_cfg.tex_set, sizeof f2_cfg.tex_set, "%s", v);
+        else if (!strcmp(k, "rp_log")) f2_cfg.rp_log = atoi(v);
+        else if (!strcmp(k, "rp_opt")) f2_cfg.rp_opt = atoi(v);
         else if (!strcmp(k, "bc_hide")) f2_cfg.bc_hide = atoi(v);
         else if (!strcmp(k, "astc_dir")) snprintf(f2_cfg.astc_dir, sizeof f2_cfg.astc_dir, "%s", v);
         else if (!strcmp(k, "game_image")) snprintf(f2_cfg.game_image, sizeof f2_cfg.game_image, "%s", v);
