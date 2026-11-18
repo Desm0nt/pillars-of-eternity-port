@@ -82,6 +82,8 @@ typedef struct {
     int pump_ms;              /* time slice of the pump per call, ms (0 = QualitySettings.asyncUploadTimeSlice) */
     char tex_set[16];         /* "" / auto: ASTC set when the GPU has no BC and overlay-astc has files; astc | bc: forced (f2_texset.c) */
     int rp_log;               /* 1: render pass load / store / barrier counters every 5 s (f2_vkwrap.c; needs vkwrap=1) */
+    int rp_opt;               /* render pass load / store savings for tile GPUs (f2_vkwrap.c): -1 auto (on for Mali / PowerVR), 0 off, 1 on;
+                                 bits for tests: 2 = no colour NOLOAD, 4 = no fold, 8 = no dead depth */
     int bc_hide;              /* 1: the player is shown a GPU without BC (f2_vkwrap.c) -- Adreno test of the no-BC path; auto then picks ASTC */
     char astc_dir[512];       /* the ASTC set's Data folder (default <files>/overlay-astc/Data) */
     char game_image[512];     /* the game image file (libf2game.so), when it is not shipped inside the APK (clean APK: setup_f2.py's
