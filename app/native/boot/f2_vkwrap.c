@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <errno.h>
+#include <pthread.h>
 #include "f2_boot.h"
 
 static PFN_vkGetInstanceProcAddr r_gipa;
@@ -189,11 +190,179 @@ static VKAPI_ATTR VkResult VKAPI_CALL w_create_cp(VkDevice d, VkPipelineCache c,
     return r;
 }
 
+/* ---- rp_log=1 (f2_config.txt, off by default): what the player's own render passes cost a tile GPU ----
+ * The 2018.1 Vulkan backend builds every VkRenderPass itself (vk::RenderPasses::GetRenderPass, Release libunity+0x659ad0): per attachment
+ * loadOp LOAD / CLEAR / DONT_CARE and storeOp STORE / DONT_CARE come from the engine's GfxRTLoadAction / GfxRTStoreAction (camera clear
+ * flags, RenderTexture.DiscardContents, the backbuffer's depth), stencil ops = depth ops, no STORE_OP_NONE (api 1.0, no extension).
+ * These wrappers only count: every 5 s, per frame, how many passes begin, how many attachments are loaded from / stored to memory and
+ * how many bytes that is (render area x format size x samples), the pipeline barriers and their stages, and the passes that move the most
+ * bytes.  On a tiler (Mali, PowerVR) a LOAD reads the attachment into the tile memory and a STORE writes it back: that is the traffic the
+ * DOOM / D3 NOLOAD / STORE_DEAD switches remove.  The pass structure is the engine's, the same on every GPU, so an Adreno run shows it. */
+static PFN_vkCreateFramebuffer r_create_fb;
+static PFN_vkCmdBeginRenderPass r_begin_rp;
+static PFN_vkCmdPipelineBarrier r_barrier;
+typedef struct { uint64_t h; unsigned id, natt, nres; uint8_t fmt_b[8], samples[8], load[8], store[8], depth[8];
+                 unsigned long w_n; double w_bytes; } rp_ent_t;
+typedef struct { uint64_t h; uint32_t w, hgt; } fb_ent_t;
+#define RP_CAP 2048
+#define FB_CAP 8192
+static rp_ent_t s_rp[RP_CAP];
+static fb_ent_t s_fb[FB_CAP];
+static unsigned s_rp_ids;
+static pthread_mutex_t s_rp_mu = PTHREAD_MUTEX_INITIALIZER;
+static struct { unsigned long begins, ld[3], st[2], dld[3], dst[2], msaa, resolve, partial, bar, bar_all, bar_img, bar_top;
+                double b_cl, b_cs, b_dl, b_ds; } s_rw;
+static unsigned fmt_bytes(VkFormat f)
+{
+    switch (f) {
+    case VK_FORMAT_R8_UNORM: case VK_FORMAT_R8_SRGB: case VK_FORMAT_S8_UINT: return 1;
+    case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_R16_UNORM: case VK_FORMAT_D16_UNORM: case VK_FORMAT_R5G6B5_UNORM_PACK16:
+    case VK_FORMAT_B5G6R5_UNORM_PACK16: case VK_FORMAT_R4G4B4A4_UNORM_PACK16: case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return 2;
+    case VK_FORMAT_D16_UNORM_S8_UINT: return 3;
+    case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R16G16B16A16_UNORM: case VK_FORMAT_R32G32_SFLOAT: return 8;
+    case VK_FORMAT_D32_SFLOAT_S8_UINT: return 5;
+    case VK_FORMAT_R32G32B32A32_SFLOAT: return 16;
+    default: return 4;
+    }
+}
+static size_t rp_slot(uint64_t h, size_t cap) { return (size_t)((h * 0x9e3779b97f4a7c15ull) >> 40) & (cap - 1); }
+static rp_ent_t *rp_find(uint64_t h, int add)
+{
+    size_t j = rp_slot(h, RP_CAP);
+    for (size_t k = 0; k < RP_CAP; k++, j = (j + 1) & (RP_CAP - 1)) {
+        if (s_rp[j].h == h) return &s_rp[j];
+        if (!s_rp[j].h) { if (!add) return NULL; memset(&s_rp[j], 0, sizeof s_rp[j]); s_rp[j].h = h; return &s_rp[j]; }
+    }
+    return NULL;
+}
+static fb_ent_t *fb_find(uint64_t h, int add)
+{
+    size_t j = rp_slot(h, FB_CAP);
+    for (size_t k = 0; k < 64; k++, j = (j + 1) & (FB_CAP - 1)) {
+        if (s_fb[j].h == h) return &s_fb[j];
+        if (!s_fb[j].h) { if (!add) return NULL; s_fb[j].h = h; return &s_fb[j]; }
+    }
+    if (add) { j = rp_slot(h, FB_CAP); s_fb[j].h = h; return &s_fb[j]; }     /* a long run: overwrite the home slot */
+    return NULL;
+}
+static const char *const k_ld[3] = { "L", "C", "-" }, *const k_st[2] = { "S", "-" };
+static void rp_desc(const rp_ent_t *e, char *out, size_t n)
+{
+    size_t w = 0; out[0] = 0;
+    for (unsigned i = 0; i < e->natt && w + 24 < n; i++)
+        w += (size_t)snprintf(out + w, n - w, "%s%s%uB%s%s%s", i ? " " : "", e->depth[i] ? "z" : "c", e->fmt_b[i], e->samples[i] > 1 ? "xN" : "",
+                              e->load[i] < 3 ? k_ld[e->load[i]] : "?", e->store[i] < 2 ? k_st[e->store[i]] : "?");
+    if (e->nres && w + 12 < n) snprintf(out + w, n - w, " +%u resolve", e->nres);
+}
+static void rp_note_create(const VkRenderPassCreateInfo *ci, VkRenderPass p)
+{
+    if (!ci || !p) return;
+    pthread_mutex_lock(&s_rp_mu);
+    rp_ent_t *e = rp_find((uint64_t)p, 1);
+    if (e) {
+        uint64_t h = e->h;
+        memset(e, 0, sizeof *e); e->h = h;
+        e->id = ++s_rp_ids;
+        e->natt = ci->attachmentCount < 8 ? ci->attachmentCount : 8;
+        for (unsigned i = 0; i < e->natt; i++) {
+            const VkAttachmentDescription *a = &ci->pAttachments[i];
+            e->depth[i] = a->format >= VK_FORMAT_D16_UNORM && a->format <= VK_FORMAT_D32_SFLOAT_S8_UINT;
+            e->fmt_b[i] = (uint8_t)fmt_bytes(a->format); e->samples[i] = (uint8_t)a->samples;
+            e->load[i] = (uint8_t)a->loadOp; e->store[i] = (uint8_t)a->storeOp;
+            if (a->format == VK_FORMAT_S8_UINT) { e->load[i] = (uint8_t)a->stencilLoadOp; e->store[i] = (uint8_t)a->stencilStoreOp; }
+        }
+        for (unsigned s = 0; s < ci->subpassCount; s++) if (ci->pSubpasses[s].pResolveAttachments)
+            for (unsigned c = 0; c < ci->pSubpasses[s].colorAttachmentCount; c++)
+                if (ci->pSubpasses[s].pResolveAttachments[c].attachment != VK_ATTACHMENT_UNUSED) e->nres++;
+        if (e->id <= 120) {
+            char d[200]; rp_desc(e, d, sizeof d);
+            f2_log("F2: rp_log: render pass #%u: %s (%u subpasses; c/z colour/depth, bytes per pixel, L/C/- load/clear/dont-care, S/- store/dont-care)",
+                   e->id, d, ci->subpassCount);
+        }
+    }
+    pthread_mutex_unlock(&s_rp_mu);
+}
+static VKAPI_ATTR VkResult VKAPI_CALL w_create_fb(VkDevice d, const VkFramebufferCreateInfo *ci, const VkAllocationCallbacks *al, VkFramebuffer *fb)
+{
+    VkResult r = r_create_fb(d, ci, al, fb);
+    if (r == VK_SUCCESS && fb && ci) {
+        pthread_mutex_lock(&s_rp_mu);
+        fb_ent_t *e = fb_find((uint64_t)*fb, 1);
+        if (e) { e->w = ci->width; e->hgt = ci->height; }
+        pthread_mutex_unlock(&s_rp_mu);
+    }
+    return r;
+}
+static VKAPI_ATTR void VKAPI_CALL w_begin_rp(VkCommandBuffer cb, const VkRenderPassBeginInfo *bi, VkSubpassContents c)
+{
+    if (bi) {
+        pthread_mutex_lock(&s_rp_mu);
+        rp_ent_t *e = rp_find((uint64_t)bi->renderPass, 0);
+        fb_ent_t *f = fb_find((uint64_t)bi->framebuffer, 0);
+        double px = (double)bi->renderArea.extent.width * bi->renderArea.extent.height;
+        s_rw.begins++;
+        if (f && (bi->renderArea.extent.width < f->w || bi->renderArea.extent.height < f->hgt)) s_rw.partial++;
+        if (e) {
+            double moved = 0;
+            for (unsigned i = 0; i < e->natt; i++) {
+                double b = px * e->fmt_b[i] * e->samples[i];
+                unsigned l = e->load[i] < 3 ? e->load[i] : 0, s = e->store[i] < 2 ? e->store[i] : 0;
+                if (e->samples[i] > 1) s_rw.msaa++;
+                if (e->depth[i]) { s_rw.dld[l]++; s_rw.dst[s]++; if (!l) s_rw.b_dl += b; if (!s) s_rw.b_ds += b; }
+                else { s_rw.ld[l]++; s_rw.st[s]++; if (!l) s_rw.b_cl += b; if (!s) s_rw.b_cs += b; }
+                moved += (!l ? b : 0) + (!s ? b : 0);
+            }
+            s_rw.resolve += e->nres;
+            e->w_n++; e->w_bytes += moved;
+        }
+        pthread_mutex_unlock(&s_rp_mu);
+    }
+    r_begin_rp(cb, bi, c);
+}
+static VKAPI_ATTR void VKAPI_CALL w_barrier(VkCommandBuffer cb, VkPipelineStageFlags src, VkPipelineStageFlags dst, VkDependencyFlags df,
+                                            uint32_t nm, const VkMemoryBarrier *m, uint32_t nb, const VkBufferMemoryBarrier *b,
+                                            uint32_t ni, const VkImageMemoryBarrier *im)
+{
+    __atomic_add_fetch(&s_rw.bar, 1, __ATOMIC_RELAXED);
+    if ((src | dst) & (VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT)) __atomic_add_fetch(&s_rw.bar_all, 1, __ATOMIC_RELAXED);
+    if (dst & (VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT))
+        __atomic_add_fetch(&s_rw.bar_top, 1, __ATOMIC_RELAXED);
+    if (ni) __atomic_add_fetch(&s_rw.bar_img, ni, __ATOMIC_RELAXED);
+    r_barrier(cb, src, dst, df, nm, m, nb, b, ni, im);
+}
+/* called from w_present every 5 s with the frames of that window */
+static void rp_report(unsigned frames, double secs)
+{
+    if (!frames || secs <= 0) return;
+    pthread_mutex_lock(&s_rp_mu);
+    const double F = frames, MB = 1048576.0, tot = s_rw.b_cl + s_rw.b_cs + s_rw.b_dl + s_rw.b_ds;
+    f2_log("F2: rp_log: per frame %.1f passes (%.1f with a partial render area); colour attachments load %.1f clear %.1f dont-care %.1f, store %.1f "
+           "dont-care %.1f; depth load %.1f clear %.1f dont-care %.1f, store %.1f dont-care %.1f; msaa %.1f resolve %.1f",
+           s_rw.begins / F, s_rw.partial / F, s_rw.ld[0] / F, s_rw.ld[1] / F, s_rw.ld[2] / F, s_rw.st[0] / F, s_rw.st[1] / F,
+           s_rw.dld[0] / F, s_rw.dld[1] / F, s_rw.dld[2] / F, s_rw.dst[0] / F, s_rw.dst[1] / F, s_rw.msaa / F, s_rw.resolve / F);
+    f2_log("F2: rp_log: per frame tile traffic MB: colour load %.1f store %.1f, depth load %.1f store %.1f (total %.1f MB per frame, %.0f MB/s); "
+           "barriers %.1f (all-commands / all-graphics %.1f, waiting at the vertex stages or earlier %.1f, image barriers %.1f)",
+           s_rw.b_cl / F / MB, s_rw.b_cs / F / MB, s_rw.b_dl / F / MB, s_rw.b_ds / F / MB, tot / F / MB, tot / MB / secs,
+           s_rw.bar / F, s_rw.bar_all / F, s_rw.bar_top / F, s_rw.bar_img / F);
+    for (int k = 0; k < 8; k++) {             /* the passes that move the most bytes */
+        rp_ent_t *best = NULL;
+        for (size_t j = 0; j < RP_CAP; j++) if (s_rp[j].h && s_rp[j].w_bytes > 0 && (!best || s_rp[j].w_bytes > best->w_bytes)) best = &s_rp[j];
+        if (!best) break;
+        char d[200]; rp_desc(best, d, sizeof d);
+        f2_log("F2: rp_log:   top %d: pass #%u x%.1f per frame, %.1f MB per frame: %s", k + 1, best->id, best->w_n / F, best->w_bytes / F / MB, d);
+        best->w_bytes = -1;               /* taken; all cleared below */
+    }
+    for (size_t j = 0; j < RP_CAP; j++) { s_rp[j].w_n = 0; s_rp[j].w_bytes = 0; }
+    memset(&s_rw, 0, sizeof s_rw);
+    pthread_mutex_unlock(&s_rp_mu);
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL w_create_rp(VkDevice d, const VkRenderPassCreateInfo *ci, const VkAllocationCallbacks *al, VkRenderPass *p)
 {
     VkResult r = r_create_rp(d, ci, al, p);
     static unsigned bad;
     if (r != VK_SUCCESS && bad++ < 20) f2_log("F2: [RED] vkCreateRenderPass FAILED %d (attachments %u)", r, ci ? ci->attachmentCount : 0);
+    if (r == VK_SUCCESS && p && f2_cfg.rp_log) rp_note_create(ci, *p);
     return r;
 }
 
@@ -277,7 +446,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL w_present(VkQueue q, const VkPresentInfoKH
         for (int i = 0; i < 8; i++) s_pp_b[i] = 0; s_pp_min = 1e9; s_pp_max = 0;
         f2_log("F2: frames: %lu total, %.1f fps over the last %.1f s (shaders %lu, pipelines %lu, pipeline time %.0f ms)", n,
                s_window_frames * 1000.0 / (t - s_window_start), (t - s_window_start) / 1000.0, f2_cnt_shaders, f2_cnt_pipelines, s_pipe_ms);
-        f2_screen_note_fps((float)(s_window_frames * 1000.0 / (t - s_window_start)));      /* the frame cap checks itself against this */
+        f2_screen_note_fps((float)(s_window_frames * 1000.0 / (t - s_window_start)));
+        if (f2_cfg.rp_log) rp_report(s_window_frames, (t - s_window_start) / 1000.0);      /* the frame cap checks itself against this */
         s_window_start = t; s_window_frames = 0;
     }
     if (s_last_present > 0 && t - s_last_present > s_st_max) s_st_max = t - s_last_present;
@@ -327,6 +497,11 @@ static void *wrap(const char *name, void *real)
     W("vkCreateSwapchainKHR", r_create_swapchain, w_create_swapchain)
     W("vkQueuePresentKHR", r_present, w_present)
     W("vkAcquireNextImageKHR", r_acquire, w_acquire)
+    if (f2_cfg.rp_log) {
+        W("vkCreateFramebuffer", r_create_fb, w_create_fb)
+        W("vkCmdBeginRenderPass", r_begin_rp, w_begin_rp)
+        W("vkCmdPipelineBarrier", r_barrier, w_barrier)
+    }
     if (f2_cfg.bc_hide) {
         W("vkGetPhysicalDeviceFeatures", r_gpd_features, w_gpd_features)
         W("vkGetPhysicalDeviceFeatures2", r_gpd_features2, w_gpd_features2)

@@ -159,6 +159,7 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "icall_log")) f2_cfg.icall_log = atoi(v);
         else if (!strcmp(k, "fps")) f2_cfg.fps = atoi(v);
         else if (!strcmp(k, "tex_set")) snprintf(f2_cfg.tex_set, sizeof f2_cfg.tex_set, "%s", v);
+        else if (!strcmp(k, "rp_log")) f2_cfg.rp_log = atoi(v);
         else if (!strcmp(k, "bc_hide")) f2_cfg.bc_hide = atoi(v);
         else if (!strcmp(k, "astc_dir")) snprintf(f2_cfg.astc_dir, sizeof f2_cfg.astc_dir, "%s", v);
         else if (!strcmp(k, "game_image")) snprintf(f2_cfg.game_image, sizeof f2_cfg.game_image, "%s", v);
