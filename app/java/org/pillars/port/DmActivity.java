@@ -7,6 +7,8 @@
 //   (nativeInput -> native/nn/f2_nn_hid.c f2_nn_pad_set)
 //   touch: every finger the pad does not take is the game's: re-made as touch events for the Unity player (UnityPlayer.injectEvent), which the
 //   game sees through UnityEngine.Input as on any Android Unity game
+//   updates: GitHub's releases/latest of the repository (UpdateNotice, frontend-common), checked once the game shows its first frames; a one-time
+//   dialog with the release notes, "Check for updates" in the pause menu, the version + "check at start" in the gear (Updates below)
 //   settings: SharedPreferences as in the port ("doom_controls" the pad, "doom_graphics" the gear, "front" the menu language); the game's language is
 //   files/f2_lang.txt (read by native/nn/f2_nn_misc.c at the start)
 // Natives are in libil2cpp.so (native/boot/f2_jni.c); the engine loads that library itself, System.loadLibrary only makes its JNI names visible here.
@@ -39,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class DmActivity extends com.unity3d.player.UnityPlayerActivity implements InputManager.InputDeviceListener, FrontMenu.Host, FrontMenu.Owner, GearHost,
@@ -110,7 +113,9 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         touch.setHoldMs(gamePrefs().getInt(F2Gear.P_HOLD, 500));
         pad = new PoePadView(this); layer.addView(pad, new FrameLayout.LayoutParams(-1, -1));
         front = new FrontMenu(this, this, pad, layer);
+        updates = new UpdateNotice(new Updates());
         addContentView(layer, new ViewGroup.LayoutParams(-1, -1));
+        layer.postDelayed(firstFrames, 1000);
         immersive();
         inputs = getSystemService(InputManager.class); if (inputs != null) inputs.registerInputDeviceListener(this, null);
         started = true;
@@ -341,7 +346,55 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         crumb("on-screen gamepad " + (on ? "shown" : "hidden") + " (pause menu)");
         front.close();
     }
+    @Override public boolean updates() { return updates != null; }   // the pause menu's "Check for updates" row
+    @Override public void checkUpdates() { if (updates != null) updates.checkNow(); }
     @Override public void onBackPressed() { if (front != null && started) front.back(); else super.onBackPressed(); }
+
+    // ---- "a new version is out" (UpdateNotice.java, frontend-common; wired as in the D3 / TL2 ports): GitHub's releases/latest of
+    // Desm0nt/pillars-of-eternity-port (stable releases only: pre-releases are never offered), once per start after the first frames, a
+    // one-time dialog with the release notes; "Check for updates" in the pause menu asks now; the gear's Updates section shows the version
+    // and "Check for new versions at start" (GearPages.updates). The running version is the APK's versionName (app/VERSION). No game-files
+    // check (requiredGameFiles 0). Texts: GearText (the menu language). Switches (environment): DM_UPDATE_CHECK=0 / always,
+    // DM_UPDATE_AS=<version>; prefs "front" upd_*. The dialog is an ordinary AlertDialog over the Unity view, as the gear is: the pad's
+    // fingers and keys are released before it shows (hold), and it never comes over the pause menu, the gear or the layout editor.
+    static final String UPDATE_REPO = "Desm0nt/pillars-of-eternity-port";
+    private UpdateNotice updates;
+    UpdateNotice updateNotice() { return updates; }   // F2Gear: the gear's Updates section
+    private final class Updates implements UpdateNotice.Host {
+        @Override public Activity activity() { return DmActivity.this; }
+        @Override public String appName() { return "Pillars of Eternity Mobile"; }
+        @Override public String repoSlug() { return UPDATE_REPO; }
+        @Override public String currentVersion() {
+            try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "0"; }
+        }
+        @Override public int requiredGameFiles() { return 0; }
+        @Override public File gameFilesStamp() { return null; }
+        @Override public int gameFilesBaseline() { return 0; }
+        @Override public String gameFilesFeatures(int have, int need) { return ""; }
+        @Override public SharedPreferences prefs() { return getSharedPreferences(Ui.PREFS, MODE_PRIVATE); }
+        @Override public String text(String key, Object... args) { return GearText.s(DmActivity.this, key, args); }
+        @Override public String language() { return GearText.code(DmActivity.this); }   // the changelog section follows the menu language
+        @Override public void crumb(String line) { DmActivity.this.crumb(line); }
+        @Override public void immersive() { DmActivity.this.immersive(); }
+        @Override public boolean canShowNotice() {
+            return resumed && started && !isFinishing() && hasWindowFocus() && (front == null || !front.isOpen()) && (pad == null || !pad.editing());
+        }
+        @Override public boolean holdGame(boolean on) {
+            if (on && front != null && front.isOpen()) return false;
+            hold(on); return true;   // the pad's fingers / keys released (the game itself runs on behind the dialog, as behind the gear)
+        }
+    }
+    // The update check starts once the game has presented frames (f2_vkwrap.c f2_frame_stats: the frame rate of the last 1.5 s, 0 = none);
+    // looked at every second from onCreate. Without the JNI names (no frame stats) it starts at once: UpdateNotice still waits for a moment.
+    private final Runnable firstFrames = new Runnable() {
+        @Override public void run() {
+            if (updates == null || isFinishing() || isDestroyed()) return;
+            float[] fs = frameStats();
+            if (libraryLoaded && (fs == null || fs[0] <= 0)) { if (layer != null) layer.postDelayed(this, 1000); return; }
+            crumb(fs != null && fs[0] > 0 ? String.format(Locale.ROOT, "first frames presented (%.0f fps): update check", fs[0]) : "update check: no frame stats, starting it now");
+            updates.start();
+        }
+    };
 
     // ---- GearHost: the shared gear; F2's sections are F2Gear
     private final float[] gearStats = new float[4];
@@ -530,6 +583,8 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         if (f != hadFocus) { hadFocus = f; crumb("window focus " + (f ? "gained" : "lost") + (f ? "" : " (locked screen or another window on top: the Unity engine will not render/advance until focus returns)")); }
     }
     @Override protected void onDestroy() {
+        if (layer != null) layer.removeCallbacks(firstFrames);
+        if (updates != null) updates.dismiss();
         if (inputs != null) inputs.unregisterInputDeviceListener(this);
         if (isFinishing()) { crumb("activity finishing"); CrashLog.sessionEnd(this); mirrorLogsAsync(); }
         if (current.get() == this) current.clear();

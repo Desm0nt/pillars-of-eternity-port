@@ -5,6 +5,7 @@
 //     picture shape   pref aspect (0)    0 = the whole screen (wide=1: the game's 16:9 request is widened, f2_screen.c), 1 = 16:9 with bars (the window is 16:9)
 //     frame rate      pref poe_fps (60)  fps=60 / 30
 //   the game's language: files/f2_lang.txt, read by native/nn/f2_nn_misc.c at the start (DmActivity.writeGameLanguage)
+//   updates: GearPages.updates, the last row (the app version + "Check for new versions at start"; "Check for updates" is the pause menu's row)
 // Not here: the port's nx2android switches without a meaning under the Unity player (Switch dock mode, Vulkan driver choice), and touch-as-the-mouse with its
 // hold time, which F2 does not have yet.
 package org.pillars.port;
@@ -36,6 +37,7 @@ final class F2Gear {
         s.add(GearPages.padControls());
         s.add(GearPages.deadzone());
         s.add(GearPages.menuLanguage());
+        if (a.updateNotice() != null) s.add(GearPages.updates(a.updateNotice()));   // the app version + "Check for new versions at start" (UpdateNotice)
         return s;
     }
 
