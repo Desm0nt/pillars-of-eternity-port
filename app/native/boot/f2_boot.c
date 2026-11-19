@@ -165,6 +165,7 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "semspin")) f2_cfg.semspin = atoi(v);
         else if (!strcmp(k, "sync_log")) f2_cfg.sync_log = atoi(v);
         else if (!strcmp(k, "uaff")) f2_cfg.uaff = atoi(v);
+        else if (!strcmp(k, "sync_trial")) f2_cfg.sync_trial = atoi(v);
         else if (!strcmp(k, "astc_dir")) snprintf(f2_cfg.astc_dir, sizeof f2_cfg.astc_dir, "%s", v);
         else if (!strcmp(k, "game_image")) snprintf(f2_cfg.game_image, sizeof f2_cfg.game_image, "%s", v);
         else if (!strcmp(k, "defres_path")) snprintf(f2_cfg.defres_path, sizeof f2_cfg.defres_path, "%s", v);

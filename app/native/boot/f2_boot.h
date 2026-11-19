@@ -86,6 +86,7 @@ typedef struct {
                                  bits for tests: 2 = no colour NOLOAD, 4 = no fold, 8 = no dead depth */
     int semspin;              /* worker spin before sleeping on a libunity semaphore, us: -1 auto (default), 0 off, N forced (f2_sync.c) */
     int sync_log;             /* 1: sem_post / sem_wait / setaffinity / futex counters every 5 s (f2_sync.c) */
+    int sync_trial;           /* 1: test: run the remedy trial even when wake-ups are cheap (f2_sync.c) */
     int uaff;                 /* 1 (default): libunity's own sched_setaffinity calls go through; 0: skipped (f2_sync.c) */
     int bc_hide;              /* 1: the player is shown a GPU without BC (f2_vkwrap.c) -- Adreno test of the no-BC path; auto then picks ASTC */
     char astc_dir[512];       /* the ASTC set's Data folder (default <files>/overlay-astc/Data) */
@@ -135,7 +136,7 @@ int f2_sem_post(sem_t *s);
 int f2_sem_wait(sem_t *s);
 long f2_syscall(long n, long a, long b, long c, long d, long e, long f);
 void f2_sync_init(void);
-void f2_sync_report(double secs);
+void f2_sync_report(double secs, double fps);
 
 /* f2_vkwrap.c */
 void *f2_vk_wrap_symbol(const char *name, void *real);   /* returns the wrapper or real */

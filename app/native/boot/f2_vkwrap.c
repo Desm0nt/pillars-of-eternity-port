@@ -1555,7 +1555,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL w_present(VkQueue q, const VkPresentInfoKH
                s_window_frames * 1000.0 / (t - s_window_start), (t - s_window_start) / 1000.0, f2_cnt_shaders, f2_cnt_pipelines, s_pipe_ms);
         f2_screen_note_fps((float)(s_window_frames * 1000.0 / (t - s_window_start)));
         if (f2_cfg.rp_log || s_opt) rp_report(s_window_frames, (t - s_window_start) / 1000.0);
-        f2_sync_report((t - s_window_start) / 1000.0);
+        f2_sync_report((t - s_window_start) / 1000.0, s_window_frames * 1000.0 / (t - s_window_start));
         s_window_start = t; s_window_frames = 0;
     }
     if (s_last_present > 0 && t - s_last_present > s_st_max) s_st_max = t - s_last_present;
