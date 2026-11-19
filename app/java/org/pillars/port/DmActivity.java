@@ -266,6 +266,7 @@ public class DmActivity extends com.unity3d.player.UnityPlayerActivity implement
         s.append("fps=").append(p.getInt(F2Gear.P_FPS, 60)).append('\n');
         s.append("res=").append(p.getInt(F2Gear.P_RES, 100)).append('\n');
         if (p.contains(F2Gear.P_TOUCH)) s.append("touch=").append(p.getBoolean(F2Gear.P_TOUCH, true) ? 1 : 0).append('\n');
+        GameFolder.hideFromGallery();
         GameFolder.DataRoot dr = GameFolder.findDataRoot(this);
         if (dr.complete) {
             s.append("data_dir=").append(dr.data.getAbsolutePath()).append('\n');

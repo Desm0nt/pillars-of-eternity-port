@@ -711,7 +711,7 @@ static f2_hook_t s_hooks[] = {
     { "__android_log_write", h_log_write, 2 }, { "__android_log_vprint", h_log_vprint, 2 }, { "__android_log_print", h_log_print, 2 },
     { "dlopen", h_dlopen, 1 }, { "dlsym", h_dlsym, 1 },
     { "eglCreateContext", NULL, 3 }, { "eglSwapBuffers", NULL, 3 },
-    { "sem_post", f2_sem_post, 1 }, { "sem_wait", f2_sem_wait, 1 }, { "syscall", f2_syscall, 1 },
+    { "sem_init", f2_sem_init, 1 }, { "sem_destroy", f2_sem_destroy, 1 }, { "sem_post", f2_sem_post, 1 }, { "sem_wait", f2_sem_wait, 1 }, { "syscall", f2_syscall, 1 },
 };
 
 static int hook_relocs(const ElfW(Rela) *rela, size_t count, const ElfW(Sym) *symtab, const char *strtab)

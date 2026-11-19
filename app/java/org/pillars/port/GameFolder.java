@@ -38,6 +38,17 @@ final class GameFolder {
         }
     }
 
+    // Download/<NAME>/.nomedia (owner 19.11): keeps the gallery from indexing the game's ~220 portraits / UI pictures under RomFS. The
+    // app reads the folder by direct paths (all-files access), which .nomedia does not affect. Created once when missing; silent on
+    // failure (no access yet: the next start tries again).
+    static void hideFromGallery() {
+        try {
+            File base = new File(Environment.getExternalStorageDirectory(), "Download/" + NAME);
+            File f = new File(base, ".nomedia");
+            if (base.isDirectory() && !f.exists()) f.createNewFile();
+        } catch (Exception e) { }
+    }
+
     // ---- Piece B: the folder the setup script (poe-port/tools/setup_f2.py) lays out, the same Download/<NAME> root the logs already
     // use. Read-only (no probe write: the game Data tree is >= 15 GB and must never be touched by this app), so this works even when the
     // folder came from an SD card / USB drive mounted read-only. Layout, matching setup_f2.py and native/boot/f2_paths.c's own naming:

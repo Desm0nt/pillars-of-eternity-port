@@ -88,6 +88,7 @@ typedef struct {
     int sync_log;             /* 1: sem_post / sem_wait / setaffinity / futex counters every 5 s (f2_sync.c) */
     int sync_trial;           /* 1: test: run the remedy trial even when wake-ups are cheap (f2_sync.c) */
     int uaff;                 /* 1 (default): libunity's own sched_setaffinity calls go through; 0: skipped (f2_sync.c) */
+    int ownsem;               /* 1 (default): libunity's semaphores use f2_sync.c's own futex semaphore (sem_post wakes one sleeper, not all) */
     int bc_hide;              /* 1: the player is shown a GPU without BC (f2_vkwrap.c) -- Adreno test of the no-BC path; auto then picks ASTC */
     char astc_dir[512];       /* the ASTC set's Data folder (default <files>/overlay-astc/Data) */
     char game_image[512];     /* the game image file (libf2game.so), when it is not shipped inside the APK (clean APK: setup_f2.py's
@@ -132,6 +133,8 @@ const char *f2_unity_variant(void);
 
 /* f2_sync.c */
 #include <semaphore.h>
+int f2_sem_init(sem_t *s, int pshared, unsigned v);
+int f2_sem_destroy(sem_t *s);
 int f2_sem_post(sem_t *s);
 int f2_sem_wait(sem_t *s);
 long f2_syscall(long n, long a, long b, long c, long d, long e, long f);

@@ -1,4 +1,8 @@
 /* f2_sync.c -- libunity's thread wake-ups (Galaxy S25 30 fps, 19.11.2026).
+ * RESULT (S25 r2, 19.11, camp with the party HUD, where 0.1.4 ran 31 fps): own semaphore alone 60 fps (sem_post 6.7 us, 33 % of the
+ * main thread), own semaphore + spin 50 us 60 fps (sem_post 2.5 us, 9 %), bionic + poll 60 fps (0.08 us), bionic + spin 50 us ~51 fps.
+ * Defaults since 0.1.5-test3: ownsem=1 everywhere; spin 50 us switched on by itself when a 5 s window shows slow sem_post (> 8 %).
+ * The remedy trial below only runs with sync_trial=1 (its 0.1.5-test1 form ran during loading and compared unlike scenes).
  *
  * Unity 2018.1's job queue puts its worker threads to sleep on a POSIX semaphore (libunity+0x29d558 sem_wait) after every job and
  * the main thread wakes them with sem_post (libunity+0x29d648) thousands of times per frame.  bionic's sem_post only enters the kernel
@@ -44,10 +48,64 @@ static _Atomic uint64_t s_post_n, s_post_slow, s_post_slow_t, s_post_t;
 static _Atomic uint64_t s_wait_n, s_wait_spin_ok, s_wait_poll_ok, s_wait_sleep, s_spin_t;
 static _Atomic uint64_t s_aff_n, s_aff_t, s_fut_n, s_fut_t;
 
+/* ---- own semaphore (ownsem=1).  bionic's sem_post wakes EVERY sleeper when one sleeps ("contended semaphore, wake up all waiters"):
+ * with Unity's 7 workers on one semaphore each post wakes them all, one takes the job, the rest go back to sleep -- the S25 r1 profile
+ * had ~4.5 wake-ups per futex call.  Here sem_init (libunity's, hooked) marks the sem_t and keeps the value and the sleeper count in
+ * its reserved words; post = atomic add, then FUTEX_WAKE of ONE thread only when someone sleeps.  Semaphores made before the hooks
+ * (no mark) stay bionic's.  sem_t on LP64 bionic = { unsigned count; int reserved[3]; }. */
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#define OWN_MAGIC 0x46325345u            /* "ES2F" */
+typedef struct { _Atomic unsigned count; _Atomic unsigned magic; _Atomic int val; _Atomic int sleepers; } own_sem_t;
+_Static_assert(sizeof(own_sem_t) <= sizeof(sem_t), "sem_t too small");
+static inline own_sem_t *own(sem_t *s) { own_sem_t *o = (own_sem_t *)s; return atomic_load_explicit(&o->magic, memory_order_relaxed) == OWN_MAGIC ? o : 0; }
+static _Atomic uint64_t s_own_n, s_own_wake;
+
+int f2_sem_init(sem_t *s, int pshared, unsigned v)
+{
+    if (!f2_cfg.ownsem || pshared) return sem_init(s, pshared, v);
+    own_sem_t *o = (own_sem_t *)s;
+    atomic_store(&o->count, 0); atomic_store(&o->val, (int)v); atomic_store(&o->sleepers, 0); atomic_store(&o->magic, OWN_MAGIC);
+    atomic_fetch_add(&s_own_n, 1);
+    return 0;
+}
+int f2_sem_destroy(sem_t *s)
+{
+    own_sem_t *o = own(s);
+    if (!o) return sem_destroy(s);
+    atomic_store(&o->magic, 0);
+    return 0;
+}
+static int own_try(own_sem_t *o)
+{
+    int c = atomic_load_explicit(&o->val, memory_order_relaxed);
+    while (c > 0) if (atomic_compare_exchange_weak_explicit(&o->val, &c, c - 1, memory_order_acquire, memory_order_relaxed)) return 1;
+    return 0;
+}
+static int own_post(own_sem_t *o)
+{
+    atomic_fetch_add(&o->val, 1);                               /* seq_cst: pairs with the sleeper's seq_cst sleepers++ */
+    if (atomic_load(&o->sleepers) > 0) {
+        atomic_fetch_add_explicit(&s_own_wake, 1, memory_order_relaxed);
+        syscall(SYS_futex, &o->val, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+    }
+    return 0;
+}
+static void own_sleep(own_sem_t *o)
+{
+    for (;;) {
+        if (own_try(o)) return;
+        atomic_fetch_add(&o->sleepers, 1);
+        if (atomic_load(&o->val) <= 0) syscall(SYS_futex, &o->val, FUTEX_WAIT_PRIVATE, 0, NULL, NULL, 0);
+        atomic_fetch_sub(&o->sleepers, 1);
+    }
+}
+
 int f2_sem_post(sem_t *s)
 {
     uint64_t t0 = tick();
-    int r = sem_post(s);
+    own_sem_t *o = own(s);
+    int r = o ? own_post(o) : sem_post(s);
     uint64_t dt = tick() - t0;
     atomic_fetch_add_explicit(&s_post_n, 1, memory_order_relaxed);
     atomic_fetch_add_explicit(&s_post_t, dt, memory_order_relaxed);
@@ -58,7 +116,12 @@ int f2_sem_post(sem_t *s)
     return r;
 }
 
-static int try_take(sem_t *s) { int v = 0; return sem_getvalue(s, &v) == 0 && v > 0 && sem_trywait(s) == 0; }
+static int try_take(sem_t *s)
+{
+    own_sem_t *o = own(s);
+    if (o) return own_try(o);
+    int v = 0; return sem_getvalue(s, &v) == 0 && v > 0 && sem_trywait(s) == 0;
+}
 
 int f2_sem_wait(sem_t *s)
 {
@@ -85,6 +148,8 @@ int f2_sem_wait(sem_t *s)
         }
     }
     atomic_fetch_add_explicit(&s_wait_sleep, 1, memory_order_relaxed);
+    own_sem_t *o = own(s);
+    if (o) { own_sleep(o); return 0; }
     return sem_wait(s);
 }
 
@@ -126,9 +191,9 @@ void f2_sync_init(void)
     } else if (f2_cfg.semspin == 0) s_phase = 2;
     FILE *fp = fopen(s_choice_path, "r");
     if (fp) { int i = -1; if (fscanf(fp, "remedy=%d", &i) == 1 && i >= 0 && i < NR) s_saved = i; fclose(fp); }
-    f2_log("F2: sync: semspin=%d (%s), remembered remedy %s, libunity sched_setaffinity %s", f2_cfg.semspin,
+    f2_log("F2: sync: semspin=%d (%s), remembered remedy %s, libunity sched_setaffinity %s, own semaphore %s", f2_cfg.semspin,
            f2_cfg.semspin < 0 ? "auto: remedies are tried when thread wake-ups turn out slow" : f2_cfg.semspin ? "forced spin" : "off",
-           s_saved >= 0 ? R[s_saved].name : "none", f2_cfg.uaff ? "kept" : "skipped (uaff=0)");
+           s_saved >= 0 ? R[s_saved].name : "none", f2_cfg.uaff ? "kept" : "skipped (uaff=0)", f2_cfg.ownsem ? "on (wake one)" : "off");
 }
 
 static void settle(void)
@@ -161,6 +226,7 @@ void f2_sync_report(double secs, double fps)
     uint64_t wsl = atomic_exchange(&s_wait_sleep, 0), st = atomic_exchange(&s_spin_t, 0);
     uint64_t an = atomic_exchange(&s_aff_n, 0), at = atomic_exchange(&s_aff_t, 0);
     uint64_t fn = atomic_exchange(&s_fut_n, 0), ft = atomic_exchange(&s_fut_t, 0);
+    uint64_t ow = atomic_exchange(&s_own_wake, 0);
     if (secs <= 0) return;
     double ms = 1000.0 / (double)hz();
     double slow_share = pst * ms / (secs * 1000.0);
@@ -168,15 +234,16 @@ void f2_sync_report(double secs, double fps)
     const remedy_t *cur = atomic_load(&s_cur);
     if (f2_cfg.sync_log)
         f2_log("F2: sync: %.1f fps | sem_post %.0f/s (avg %.2f us; slow>3us %.0f/s avg %.1f us = %.0f %% of the time) | sem_wait %.0f/s: "
-               "spin hit %.0f/s, poll hit %.0f/s, slept %.0f/s, spin %.0f ms/s | setaffinity %.0f/s (%.2f ms/s) | futex %.0f/s (%.2f ms/s) | %s",
+               "spin hit %.0f/s, poll hit %.0f/s, slept %.0f/s, spin %.0f ms/s | setaffinity %.0f/s (%.2f ms/s) | futex %.0f/s (%.2f ms/s) | own sem %llu, wake-one %.0f/s | %s",
                fps, pn / secs, pn ? pt * ms * 1000 / pn : 0, ps / secs, ps ? pst * ms * 1000 / ps : 0, slow_share * 100,
-               wn / secs, wok / secs, wpo / secs, wsl / secs, st * ms / secs, an / secs, at * ms / secs, fn / secs, ft * ms / secs, cur->name);
+               wn / secs, wok / secs, wpo / secs, wsl / secs, st * ms / secs, an / secs, at * ms / secs, fn / secs, ft * ms / secs,
+               (unsigned long long)atomic_load(&s_own_n), ow / secs, cur->name);
     if (f2_cfg.semspin >= 0) return;
     if (s_phase == 0) {
         if (!f2_cfg.sync_trial && (pn < 1000 || slow_share < 0.08)) return;
         f2_log("F2: sync: slow thread wake-ups: %.0f %% of the time in sem_post, %.1f us per slow call, %.1f fps", slow_share * 100,
                ps ? pst * ms * 1000 / ps : 0, fps);
-        if (s_saved >= 0 && !f2_cfg.sync_trial) { set_remedy(s_saved, "remembered from an earlier run"); s_phase = 2; return; }
+        if (!f2_cfg.sync_trial) { set_remedy(1, "slow wake-ups: spin 50 us, the S25 r2 winner"); s_phase = 2; return; }
         s_phase = 1; s_slot = 0; s_win = 0;
         set_remedy(1 % NR, "trial 1");
         return;
