@@ -17,7 +17,7 @@
 int f2_alloc_overflowed(void);
 void f2_alloc_side_stats(unsigned long *now, unsigned long *peak);
 f2_config_t f2_cfg = {
-    .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1, .rp_opt = -1,
+    .hooks = 1, .patch_platform = 1, .logtee = 1, .vkwrap = 1, .rp_opt = -1, .semspin = -1, .sync_log = 1, .uaff = 1,
     .invoke_log = 60, .throw_log = 300, .open_log = 400, .heartbeat = 5, .crash = 1, .ctl = 1,
     .pump = 1, .pump_ms = 0, .wide = 1, .fps = 60, .res = 100, .pace = 1, .msaa = 0, .touch = 1, .any_gpu = 1, .alloc_fix = 1, .tsb_fix = 1, .stall_dump = 3,
 };
@@ -162,6 +162,9 @@ static void read_config_file(const char *file)
         else if (!strcmp(k, "rp_log")) f2_cfg.rp_log = atoi(v);
         else if (!strcmp(k, "rp_opt")) f2_cfg.rp_opt = atoi(v);
         else if (!strcmp(k, "bc_hide")) f2_cfg.bc_hide = atoi(v);
+        else if (!strcmp(k, "semspin")) f2_cfg.semspin = atoi(v);
+        else if (!strcmp(k, "sync_log")) f2_cfg.sync_log = atoi(v);
+        else if (!strcmp(k, "uaff")) f2_cfg.uaff = atoi(v);
         else if (!strcmp(k, "astc_dir")) snprintf(f2_cfg.astc_dir, sizeof f2_cfg.astc_dir, "%s", v);
         else if (!strcmp(k, "game_image")) snprintf(f2_cfg.game_image, sizeof f2_cfg.game_image, "%s", v);
         else if (!strcmp(k, "defres_path")) snprintf(f2_cfg.defres_path, sizeof f2_cfg.defres_path, "%s", v);

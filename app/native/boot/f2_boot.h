@@ -84,6 +84,9 @@ typedef struct {
     int rp_log;               /* 1: render pass load / store / barrier counters every 5 s (f2_vkwrap.c; needs vkwrap=1) */
     int rp_opt;               /* render pass load / store savings for tile GPUs (f2_vkwrap.c): -1 auto (on for Mali / PowerVR), 0 off, 1 on;
                                  bits for tests: 2 = no colour NOLOAD, 4 = no fold, 8 = no dead depth */
+    int semspin;              /* worker spin before sleeping on a libunity semaphore, us: -1 auto (default), 0 off, N forced (f2_sync.c) */
+    int sync_log;             /* 1: sem_post / sem_wait / setaffinity / futex counters every 5 s (f2_sync.c) */
+    int uaff;                 /* 1 (default): libunity's own sched_setaffinity calls go through; 0: skipped (f2_sync.c) */
     int bc_hide;              /* 1: the player is shown a GPU without BC (f2_vkwrap.c) -- Adreno test of the no-BC path; auto then picks ASTC */
     char astc_dir[512];       /* the ASTC set's Data folder (default <files>/overlay-astc/Data) */
     char game_image[512];     /* the game image file (libf2game.so), when it is not shipped inside the APK (clean APK: setup_f2.py's
@@ -125,6 +128,14 @@ void f2_hooks_install(void *unity_handle);
 uintptr_t f2_unity_base(void);
 size_t f2_unity_size(void);
 const char *f2_unity_variant(void);
+
+/* f2_sync.c */
+#include <semaphore.h>
+int f2_sem_post(sem_t *s);
+int f2_sem_wait(sem_t *s);
+long f2_syscall(long n, long a, long b, long c, long d, long e, long f);
+void f2_sync_init(void);
+void f2_sync_report(double secs);
 
 /* f2_vkwrap.c */
 void *f2_vk_wrap_symbol(const char *name, void *real);   /* returns the wrapper or real */

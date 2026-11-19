@@ -711,6 +711,7 @@ static f2_hook_t s_hooks[] = {
     { "__android_log_write", h_log_write, 2 }, { "__android_log_vprint", h_log_vprint, 2 }, { "__android_log_print", h_log_print, 2 },
     { "dlopen", h_dlopen, 1 }, { "dlsym", h_dlsym, 1 },
     { "eglCreateContext", NULL, 3 }, { "eglSwapBuffers", NULL, 3 },
+    { "sem_post", f2_sem_post, 1 }, { "sem_wait", f2_sem_wait, 1 }, { "syscall", f2_syscall, 1 },
 };
 
 static int hook_relocs(const ElfW(Rela) *rela, size_t count, const ElfW(Sym) *symtab, const char *strtab)
@@ -773,6 +774,7 @@ void f2_hooks_install(void *unity_handle)
     int n = 0;
     if (jmprel) n += hook_relocs(jmprel, pltrelsz / sizeof(ElfW(Rela)), symtab, strtab);
     if (rela) n += hook_relocs(rela, relasz / sizeof(ElfW(Rela)), symtab, strtab);
+    f2_sync_init();
     f2_once_milestone(M_HOOKED, "%d import slots of libunity hooked (file redirect%s, dlsym, dlopen, egl)", n, f2_cfg.logtee ? ", log copy" : "");
     if (n < 10) f2_log("F2: [RED] fewer hooks than expected (%d): the redirect may be incomplete", n);
 }
